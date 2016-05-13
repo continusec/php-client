@@ -142,9 +142,9 @@ function object_hash_with_std_redaction($o) {
 	return object_hash_with_redaction($o, $REDACTED_PREFIX);
 }
 
-function shed_std_redactibility($o) {
+function shed_std_redactability($o) {
 	global $REDACTED_PREFIX;
-	return shed_redactibility($o, $REDACTED_PREFIX);
+	return shed_redactability($o, $REDACTED_PREFIX);
 }
 
 function unredact_dict($o, $r) {
@@ -156,7 +156,7 @@ function unredact_dict($o, $r) {
 		switch (gettype($v)) {
 		case "array":
 			if (count($v) == 2) {
-				$rv->$k = shed_redactibility($v[1], $r);
+				$rv->$k = shed_redactability($v[1], $r);
 				break;
 			} else {
 				throw new Exception("Unrecognized value in object that we expected to be redacted (3)");
@@ -178,12 +178,12 @@ function unredact_dict($o, $r) {
 function unredact_list($o, $r) {
 	$rv = array();
 	for ($i = 0; $i < count($o); $i++) {
-		array_push($rv, shed_redactibility($o[$i], $r));
+		array_push($rv, shed_redactability($o[$i], $r));
 	}
 	return $rv;
 }
 
-function shed_redactibility($o, $r) {
+function shed_redactability($o, $r) {
 	switch (gettype($o)) {
 	case "array":
 		if (is_array_a_list($o, true)) {
@@ -199,6 +199,16 @@ function shed_redactibility($o, $r) {
 		return $o;
 	}
 }
+
+class ContinusecException extends Exception {}
+
+class ObjectNotFoundException extends ContinusecException {}
+class UnauthorizedAccessException extends ContinusecException {}
+class ObjectConflictException extends ContinusecException {}
+class VerificationFailedException extends ContinusecException {}
+class InvalidRangeException extends ContinusecException {}
+class InternalErrorException extends ContinusecException {}
+class NotAllEntriesReturnedException extends ContinusecException {}
 
 class ContinusecClient {
 	private $account;
@@ -219,7 +229,7 @@ class ContinusecClient {
 		return new VerifiableMap($this, "/map/".$name);
 	}
 
-	/* not really intended to be public, just for internal use by this package */
+	/* not intended to be public, just for internal use by this package */
 	public function makeRequest($method, $path, $data) {
 		$conn = curl_init();
 		curl_setopt($conn, CURLOPT_URL, $this->baseUrl . "/v1/account/" . $this->account . $path);
@@ -248,13 +258,15 @@ class ContinusecClient {
 				"body"=>$resp
 			);
 		} else if ($statusCode == 400) {
-			throw new Exception("Invalid request");
+			throw new InvalidRangeException();
 		} else if ($statusCode == 403) {
-			throw new Exception("Unauthorized access");
+			throw new UnauthorizedAccessException();
 		} else if ($statusCode == 404) {
-			throw new Exception("Resource not found");
+			throw new ObjectNotFoundException();
+		} else if ($statusCode == 409) {
+			throw new ObjectConflictException();
 		} else {
-			throw new Exception("Unknown error");
+			throw new InternalErrorException();
 		}
 	}
 }
@@ -288,8 +300,8 @@ class VerifiableMap {
 		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson", $value);
 	}
 
-	function setRedactibleJson($key, $value) {
-		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson/redactible", $value);
+	function setredactableJson($key, $value) {
+		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson/redactable", $value);
 	}
 
 	function delete($key) {
@@ -336,7 +348,7 @@ class VerifiableMap {
 
 	function getRedactedJson($key, $treeSize) {
 		$rv = $this->getJson($key, $treeSize);
-		$rv->json = shed_std_redactibility($rv->json);
+		$rv->json = shed_std_redactability($rv->json);
 		return $rv;
 	}
 
@@ -347,6 +359,300 @@ class VerifiableMap {
 		    "root_hash"=>base64_decode($obj->map_hash)
 		];
 	}
+}
+
+class RawDataEntry {
+	private $data;
+
+	function RawDataEntry($data) {
+		$this->data = $data;
+	}
+
+	function getFormat() {
+		return "";
+	}
+
+	function getData() {
+		return $this->data;
+	}
+
+	function getDataForUpload() {
+		return $this->data;
+	}
+
+	function getLeafHash() {
+		return leaf_merkle_tree_hash($this->data);
+	}
+}
+
+class JsonEntry {
+	private $data;
+
+	function JsonEntry($json) {
+		$this->data = $json;
+	}
+
+	function getFormat() {
+		return "/xjson";
+	}
+
+	function getData() {
+		return $this->data;
+	}
+
+	function getDataForUpload() {
+		return $this->data;
+	}
+
+	function getLeafHash() {
+		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+	}
+}
+
+class RedactableJsonEntry {
+	private $data;
+
+	function RedactableJsonEntry($json) {
+		$this->data = $json;
+	}
+
+	function getFormat() {
+		return "/xjson/redactable";
+	}
+
+	function getDataForUpload() {
+		return $this->data;
+	}
+}
+
+class RedactedJsonEntry {
+	private $data;
+
+	function RedactedJsonEntry($json) {
+		$this->data = $json;
+	}
+
+	function getData() {
+		return json_encode(shed_std_redactability(json_decode($this->data)));
+	}
+
+	function getLeafHash() {
+		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+	}
+}
+
+class AddEntryResponse {
+	private $leafHash;
+
+	function AddEntryResponse($leafHash) {
+		$this->leafHash = $leafHash;
+	}
+
+	function getLeafHash() {
+		return $this->leafHash;
+	}
+}
+
+class RawDataEntryFactory {
+	function createFromBytes($bytes) {
+		return new RawDataEntry($bytes);
+	}
+
+	function getFormat() {
+		return "";
+	}
+}
+
+class JsonEntryFactory {
+	function createFromBytes($bytes) {
+		return new JsonEntry($bytes);
+	}
+
+	function getFormat() {
+		return "/xjson";
+	}
+}
+
+class RedactedJsonEntryFactory {
+	function createFromBytes($bytes) {
+		return new RedactedJsonEntry($bytes);
+	}
+
+	function getFormat() {
+		return "/xjson";
+	}
+}
+
+class LogInclusionProof {
+	private $treeSize;
+	private $leafHash;
+	private $leafIndex;
+	private $auditPath;
+
+	function LogInclusionProof($treeSize, $leafHash, $leafIndex, $auditPath) {
+		$this->treeSize = $treeSize;
+		$this->leafHash = $leafHash;
+		$this->leafIndex = $leafIndex;
+		$this->auditPath = $auditPath;
+	}
+
+	function getTreeSize() {
+		return $this->treeSize;
+	}
+
+	function getLeafHash() {
+		return $this->leafHash;
+	}
+
+	function getLeafIndex() {
+		return $this->leafIndex;
+	}
+
+	function getAuditPath() {
+		return $this->auditPath;
+	}
+
+	function verify($treeHead) {
+		if (($this->leafIndex >= $treeHead->getTreeSize()) || ($this->leafIndex < 0)) {
+			throw new VerificationFailedException("Invalid proof (1)");
+		}
+		if ($this->treeSize != $treeHead->getTreeSize()) {
+			throw new VerificationFailedException("Invalid proof (4)");
+		}
+
+		$fn = intval($this->leafIndex);
+		$sn = intval($this->treeSize) - 1;
+		$r = $this->leafHash;
+
+		foreach($this->auditPath as $p) {
+			if (($fn == $sn) || (($fn & 1) == 1)) {
+				$r = node_merkle_tree_hash($p, $r);
+				while (!(($fn == 0) || (($fn & 1) == 1))) {
+					$fn >>= 1;
+					$sn >>= 1;
+				}
+			} else {
+				$r = node_merkle_tree_hash($r, $p);
+			}
+			$fn >>= 1;
+			$sn >>= 1;
+		}
+
+		if ($sn != 0) {
+			throw new VerificationFailedException("Invalid proof (2)");
+		}
+
+		if ($r != $treeHead->getRootHash()) {
+			throw new VerificationFailedException("Invalid proof (3)");
+		}
+	}
+}
+
+class LogConsistencyProof {
+	private $firstSize;
+	private $secondSize;
+	private $auditPath;
+
+	function LogConsistencyProof($firstSize, $secondSize, $auditPath) {
+		$this->firstSize = $firstSize;
+		$this->secondSize = $secondSize;
+		$this->auditPath = $auditPath;
+	}
+
+	function getFirstSize() {
+		return $this->firstSize;
+	}
+
+	function getSecondSize() {
+		return $this->secondSize;
+	}
+
+	function getAuditPath() {
+		return $this->auditPath;
+	}
+
+	function verify($firstTreeHead, $secondTreeHead) {
+		if ($firstTreeHead->getTreeSize() != $this->firstSize) {
+			throw new VerificationFailedException("Invalid proof (10)");
+		}
+		if ($secondTreeHead->getTreeSize() != $this->secondSize) {
+			throw new VerificationFailedException("Invalid proof (11)");
+		}
+		if (($firstTreeHead->getTreeSize() < 1) || ($firstTreeHead->getTreeSize() >= $secondTreeHead->getTreeSize())) {
+			throw new VerificationFailedException("Invalid proof (4)");
+		}
+
+		$proof = $this->auditPath; // since PHP arrays are copy on assign, we have a copy!
+		if (is_pow_2($firstTreeHead->getTreeSize())) {
+			array_unshift($proof, $firstTreeHead->getRootHash());
+		}
+
+		$fn = $this->firstSize - 1;
+		$sn = $this->secondSize - 1;
+
+		while (($fn & 1) == 1) {
+			$fn >>= 1;
+			$sn >>= 1;
+		}
+
+		if (count($proof) == 0) {
+			throw new VerificationFailedException("Invalid proof (5)");
+		}
+
+		$fr = $proof[0];
+		$sr = $proof[0];
+
+		for ($i = 1; $i < count($proof); $i++) {
+			if ($sn == 0) {
+				throw new VerificationFailedException("Invalid proof (6)");
+			}
+
+			if ((($fn & 1) == 1) || ($fn == $sn)) {
+				$fr = node_merkle_tree_hash($proof[$i], $fr);
+				$sr = node_merkle_tree_hash($proof[$i], $sr);
+				while (!(($fn == 0) || (($fn & 1) == 1))) {
+					$fn >>= 1;
+					$sn >>= 1;
+				}
+			} else {
+				$sr = node_merkle_tree_hash($sr, $proof[$i]);
+			}
+
+			$fn >>= 1;
+			$sn >>= 1;
+		}
+
+		if ($sn != 0) {
+			throw new VerificationFailedException("Invalid proof (7)");
+		}
+
+		if ($fr != $firstTreeHead->getRootHash()) {
+			throw new VerificationFailedException("Invalid proof (8)");
+		}
+
+		if ($sr != $secondTreeHead->getRootHash()) {
+			throw new VerificationFailedException("Invalid proof (9)");
+		}
+	}
+}
+
+class LogTreeHead {
+	private $treeSize;
+	private $rootHash;
+
+	function LogTreeHead($treeSize, $rootHash) {
+		$this->treeSize = $treeSize;
+		$this->rootHash = $rootHash;
+	}
+
+	function getTreeSize() {
+		return $this->treeSize;
+	}
+
+	function getRootHash() {
+		return $this->rootHash;
+	}
+
 }
 
 class VerifiableLog {
@@ -362,12 +668,9 @@ class VerifiableLog {
 		$this->client->makeRequest("PUT", $this->path, null);
 	}
 
-	function getTreeHash($treeSize=0) {
+	function getTreeHead($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
-		return (object)[
-		    "tree_size"=>$obj->tree_size,
-		    "root_hash"=>base64_decode($obj->tree_hash)
-		];
+		return new LogTreeHead($obj->tree_size, base64_decode($obj->tree_hash));
 	}
 
 	function getInclusionProof($treeSize, $leafHash) {
@@ -376,11 +679,16 @@ class VerifiableLog {
 		foreach ($obj->proof as $p) {
 		    array_push($auditPath, base64_decode($p));
 		}
-		return (object)[
-		    "leaf_index"=>$obj->leaf_index,
-		    "audit_path"=>$auditPath,
-		    "leaf_hash"=>$leafHash
-		];
+		return new LogInclusionProof($treeSize, $leafHash, $obj->leaf_index, $auditPath);
+	}
+
+	function getInclusionProofByIndex($treeSize, $leafIndex) {
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/" . $leafIndex, null)["body"]);
+		$auditPath = array();
+		foreach ($obj->proof as $p) {
+		    array_push($auditPath, base64_decode($p));
+		}
+		return new LogInclusionProof($treeSize, null, $obj->leaf_index, $auditPath);
 	}
 
 	function getConsistencyProof($firstSize, $secondSize) {
@@ -389,62 +697,144 @@ class VerifiableLog {
 		foreach ($obj->proof as $p) {
 		    array_push($auditPath, base64_decode($p));
 		}
-		return $auditPath;
+		return new LogConsistencyProof($firstSize, $secondSize, $auditPath);
 	}
 
-	function addEntry($data) {
-		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry", $data)["body"]);
-		return base64_decode($obj->leaf_hash);
+	function addEntry($entry) {
+		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry" . $entry->getFormat(), $entry->getDataForUpload())["body"]);
+		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
-	function addJsonEntry($data) {
-		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry/xjson", $data)["body"]);
-		return base64_decode($obj->leaf_hash);
+	function getEntry($idx, $factory) {
+		return $factory->createFromBytes($this->client->makeRequest("GET", $this->path . "/entry/" . $idx . $factory->getFormat(), null)["body"]);
 	}
 
-	function addRedactibleJsonEntry($data) {
-		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry/xjson/redactible", $data)["body"]);
-		return base64_decode($obj->leaf_hash);
-	}
-
-	function internalGetEntry($idx, $format) {
-		return $this->client->makeRequest("GET", $this->path . "/entry/" . $idx . $format, null)["body"];
-	}
-
-	function getEntry($idx) {
-		return $this->internalGetEntry($idx, "");
-	}
-
-	function getJsonEntry($idx) {
-		return decode_json($this->internalGetEntry($idx, "/xjson"));
-	}
-
-	function getRedactibleJsonEntry($idx) {
-		return shed_std_redactibility(decode_json($this->internalGetEntry($idx, "/xjson")));
-	}
-
-	function getEntries($startIdx, $endIdx) {
+	function getEntries($startIdx, $endIdx, $factory) {
 	    $rv = array();
-		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx, null)["body"])->entries as $a) {
-		    array_push($rv, base64_decode($a->leaf_data));
+		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx . $factory->getFormat(), null)["body"])->entries as $a) {
+		    array_push($rv, $factory->createFromBytes(base64_decode($a->leaf_data)));
 		}
 		return $rv;
 	}
 
-	function getJsonEntries($startIdx, $endIdx) {
-	    $rv = array();
-		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx, null)["body"])->entries as $a) {
-		    array_push($rv, decode_json(base64_decode($a->leaf_data)));
+	function blockUntilPresent($mtlHash) {
+		$lastHead = -1;
+		$secsToSleep = 0;
+		while (true) {
+			$lth = $this->getTreeHead(0);
+			if ($lth->getTreeSize() > $lastHead) {
+				$lastHead = $lth->getTreeSize();
+				try {
+					if ($this->getInclusionProof($lth->getTreeSize(), $mtlHash) != null) {
+						return $lth;
+					}
+				} catch (InvalidRangeException $e) {
+					// not present yet, ignore
+				}
+				// since we got a new tree head, reset sleep time
+				$secsToSleep = 1;
+			} else {
+				// no luck, snooze a bit longer
+				$secsToSleep *= 2;
+			}
+			sleep($secsToSleep);
 		}
-		return $rv;
 	}
 
-	function getRedactibleJsonEntries($startIdx, $endIdx) {
-	    $rv = array();
-		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx, null)["body"])->entries as $a) {
-		    array_push($rv, shed_std_redactibility(decode_json(base64_decode($a->leaf_data))));
+	function fetchVerifiedTreeHead($prev) {
+		// Fetch latest from server
+		$head = $this->getTreeHead(0);
+
+		// If the new hash no later than our current one,
+		if ($head->getTreeSize() <= $prev->getTreeSize()) {
+			// return our current one
+			return $prev;
+		} else { // verify consistency with new one
+			// If previous is zero, then skip consistency check
+			if ($prev->getTreeSize() != 0) {
+				 // First fetch a consistency proof from the server
+				$p = $this->getConsistencyProof($prev->getTreeSize(), $head->getTreeSize());
+
+				// Verify the consistency proof
+				$p->verify($prev, $head);
+			}
+			return $head;
 		}
-		return $rv;
+	}
+
+	function verifySuppliedInclusionProof($prev, $proof) {
+		$headForInclProof = null;
+		if ($proof->getTreeSize() == $prev->getTreeSize()) {
+			$headForInclProof = $prev;
+		} else {
+			$headForInclProof = $this->getTreeHead($proof->getTreeSize());
+			if ($prev->getTreeSize() != 0) { // so long as prev is not special value, check consistency
+				if ($prev->getTreeSize() < $headForInclProof->getTreeSize()) {
+					$p = $this->getConsistencyProof($prev->getTreeSize(), $headForInclProof->getTreeSize());
+					$p->verify($prev, $headForInclProof);
+				} else if ($prev->getTreeSize() > $headForInclProof->getTreeSize()) {
+					$p = $this->getConsistencyProof($headForInclProof->getTreeSize(), $prev->getTreeSize());
+					$p->verify($headForInclProof, $prev);
+				} else { // should not get here
+					throw new VerificationFailedException();
+				}
+			}
+		}
+		$proof->verify($headForInclProof);
+		return $headForInclProof;
+	}
+
+	function auditLogEntries($prev, $head, $factory, $auditor) {
+		if (($prev == null) || $prev->getTreeSize() < $head->getTreeSize()) {
+			$merkleTreeStack = [];
+			if (($prev != null) && ($prev->getTreeSize() > 0)) {
+				$p = $this->getInclusionProofByIndex($prev->getTreeSize()+1, $prev->getTreeSize());
+				$firstHash = null;
+				$path = $p->getAuditPath();
+				foreach ($path as $b) {
+					if ($firstHash == null) {
+						$firstHash = $b;
+					} else {
+						$firstHash = node_merkle_tree_hash($b, $firstHash);
+					}
+				}
+				if ($firstHash != $prev->getRootHash()) {
+					throw new VerificationFailedException();
+				}
+				for ($i = count($path) - 1; $i >= 0; $i--) {
+					array_push($merkleTreeStack, $path[$i]);
+				}
+			}
+
+			$idx = ($prev == null) ? 0 : $prev->getTreeSize();
+			$entries = $this->getEntries($idx, $head->getTreeSize(), $factory);
+			foreach ($entries as $e) {
+				// do whatever content audit is desired on e
+				$auditor->auditLogEntry($idx, $e);
+
+				// update the merkle tree hash stack:
+				array_push($merkleTreeStack, $e->getLeafHash());
+				for ($z = $idx; ($z & 1) == 1; $z >>= 1) {
+					$right = array_pop($merkleTreeStack);
+					$left = array_pop($merkleTreeStack);
+					array_push($merkleTreeStack, node_merkle_tree_hash($left, $right));
+				}
+				$idx++;
+			}
+
+			if ($idx != $head->getTreeSize()) {
+				throw new NotAllEntriesReturnedException();
+			}
+
+			$headHash = array_pop($merkleTreeStack);
+			while (count($merkleTreeStack) > 0) {
+				$headHash = node_merkle_tree_hash(array_pop($merkleTreeStack), $headHash);
+			}
+
+			if ($headHash != $head->getRootHash()) {
+				throw new VerificationFailedException();
+			}
+		}
 	}
 }
 
@@ -454,38 +844,6 @@ function leaf_merkle_tree_hash($b) {
 
 function node_merkle_tree_hash($l, $r) {
     return hash("sha256", chr(1) . $l . $r, true);
-}
-
-function verify_log_inclusion_proof($treeHash, $inclusionProof) {
-    if (($inclusionProof->leaf_index >= $treeHash->tree_size) || ($inclusionProof->leaf_index < 0)) {
-        throw new Exception("Invalid proof (1)");
-    }
-
-    $fn = intval($inclusionProof->leaf_index);
-    $sn = intval($treeHash->tree_size) - 1;
-    $r = $inclusionProof->leaf_hash;
-
-    foreach($inclusionProof->audit_path as $p) {
-        if (($fn == $sn) || (($fn & 1) == 1)) {
-            $r = node_merkle_tree_hash($p, $r);
-            while (!(($fn == 0) || (($fn & 1) == 1))) {
-                $fn >>= 1;
-                $sn >>= 1;
-            }
-        } else {
-            $r = node_merkle_tree_hash($r, $p);
-        }
-        $fn >>= 1;
-        $sn >>= 1;
-    }
-
-    if ($sn != 0) {
-        throw new Exception("Invalid proof (2)");
-    }
-
-    if ($r != $treeHash->root_hash) {
-        throw new Exception("Invalid proof (3)");
-    }
 }
 
 function calc_k($n) {
@@ -498,63 +856,6 @@ function calc_k($n) {
 
 function is_pow_2($n) {
     return calc_k($n + 1) == $n;
-}
-
-function verify_log_consistency_proof($firstTreeHead, $secondTreeHead, $proof) {
-    if (($firstTreeHead->tree_size < 1) || ($firstTreeHead->tree_size >= $secondTreeHead->tree_size)) {
-        throw new Exception("Invalid proof (4)");
-    }
-
-    if (is_pow_2($firstTreeHead->tree_size)) {
-        array_unshift($proof, $firstTreeHead->root_hash);
-    }
-
-    $fn = $firstTreeHead->tree_size - 1;
-    $sn = $secondTreeHead->tree_size - 1;
-
-    while (($fn & 1) == 1) {
-        $fn >>= 1;
-        $sn >>= 1;
-    }
-
-    if (count($proof) == 0) {
-        throw new Exception("Invalid proof (5)");
-    }
-
-    $fr = $proof[0];
-    $sr = $proof[0];
-
-    for ($i = 1; $i < count($proof); $i++) {
-        if ($sn == 0) {
-            throw new Exception("Invalid proof (6)");
-        }
-
-        if ((($fn & 1) == 1) || ($fn == $sn)) {
-            $fr = node_merkle_tree_hash($proof[$i], $fr);
-            $sr = node_merkle_tree_hash($proof[$i], $sr);
-            while (!(($fn == 0) || (($fn & 1) == 1))) {
-                $fn >>= 1;
-                $sn >>= 1;
-            }
-        } else {
-            $sr = node_merkle_tree_hash($sr, $proof[$i]);
-        }
-
-        $fn >>= 1;
-        $sn >>= 1;
-    }
-
-    if ($sn != 0) {
-        throw new Exception("Invalid proof (7)");
-    }
-
-    if ($fr != $firstTreeHead->root_hash) {
-        throw new Exception("Invalid proof (8)");
-    }
-
-    if ($sr != $secondTreeHead->root_hash) {
-        throw new Exception("Invalid proof (9)");
-    }
 }
 
 function construct_map_key_path($key) {
@@ -603,70 +904,4 @@ function generate_map_default_leaf_values() {
 }
 
 $DEFAULT_LEAF_VALUES = generate_map_default_leaf_values();
-
-//$client = new ContinusecClient("youraccount", "yoursecret");
-//$map = $client->getVerifiableMap("phpmap");
-//$map->set("foo", "bar");
-//$map->setJson("json", json_encode((object)["name"=>"adam", "ssn"=>"123"]));
-//$map->setRedactibleJson("redact", json_encode((object)["name"=>"adam", "ssn"=>"123"]));
-//$map->create();
-//$head = $map->getTreeHash();
-//$val = $map->get("foo", $head->tree_size);
-//var_dump($val);
-//verify_map_inclusion_proof($head, $val);
-//$val = $map->getJson("json", $head->tree_size);
-//var_dump($val);
-//verify_map_inclusion_proof($head, $val);
-//$val = $map->getRedactedJson("redact", $head->tree_size);
-//var_dump($val);
-//verify_map_inclusion_proof($head, $val);
-
-//$log = $client->getVerifiableLog("javalog");
-//$log->create();
-//$log->addEntry("hfoo");
-//$log->addJsonEntry(json_encode(array("name"=>"adam", "ssn"=>"1234")));
-//$log->addRedactibleJsonEntry(json_encode(array("name"=>"adam", "ssn"=>"1234")));
-//$log->addEntry("baz");
-//$head = $log->getTreeHash();
-//$proof = $log->getInclusionProof($head->tree_size, leaf_merkle_tree_hash(object_hash_with_std_redaction((object)["name"=>"adam", "ssn"=>"1234"])));
-//verify_log_inclusion_proof($head, $proof);
-//$oldHead = $log->getTreeHash(1);
-//$proof = $log->getConsistencyProof($oldHead->tree_size, $head->tree_size);
-//verify_log_consistency_proof($oldHead, $head, $proof);
-
-//echo $log->getEntry(1);
-//foreach ($log->getEntries(0, $head->tree_size) as $x) {
-//    echo $x . "\n";
-//}
-
-function object_hash_test($test_loc) {
-	$f = fopen($test_loc, "r") or die("File not found");
-	$state = 0;
-	while (($line = fgets($f)) !== false) {
-		$line = trim($line);
-		if (strlen($line) > 0) {
-			if ($line[0] != "#") {
-				switch ($state) {
-				case 0:
-					$json = $line;
-					$state = 1;
-					break;
-				case 1:
-					$answer = $line;
-					$x = object_hash_with_std_redaction(json_decode($json));
-					if ($x == hex2bin($answer)) {
-						echo "Match! - ".$json."\n";
-					} else {
-						echo "Fail! - ".$json."\n";
-						//echo "got ".bin2hex($x)." expected ".$answer."\n";
-					}
-					$state = 0;
-					break;
-				}
-			}
-		}
-	}
-}
-
-object_hash_test("../../objecthash/common_json.test");
 ?>
