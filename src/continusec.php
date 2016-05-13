@@ -18,6 +18,9 @@
 
 error_reporting(-1);
 
+/**
+ * @ignore
+ */
 $NORMALIZE_FUNC = function ($o) { return $o; };
 if (function_exists("normalizer_normalize")) {
 	$NORMALIZE_FUNC = function($o) { return normalizer_normalize($o, Normalizer::FORM_C); };
@@ -29,10 +32,15 @@ if (!function_exists("curl_init")) {
 	error_log("ERROR: curl_init not found. Without this the Continusec library can't make outbound connections.", 0);
 }
 
-
+/**
+ * @ignore
+ */
 $REDACTED_PREFIX = "***REDACTED*** Hash: ";
 
-/* PHP doesn't distinguish between a list and a map - sigh, so here is our best attempt */
+/**
+ * @ignore
+ * PHP doesn't distinguish between a list and a map - sigh, so here is our best attempt
+ */
 function is_array_a_list($o, $def) {
 	$keys = array_keys($o);
 	if (count($keys) == 0) {
@@ -42,6 +50,9 @@ function is_array_a_list($o, $def) {
 	}
 }
 
+/**
+ * @ignore
+ */
 function object_hash_list_with_redaction($o, $r) {
 	$rv = "l";
 	for ($i = 0; $i < count($o); $i++) {
@@ -50,6 +61,9 @@ function object_hash_list_with_redaction($o, $r) {
 	return hash("sha256", $rv, true);
 }
 
+/**
+ * @ignore
+ */
 function object_hash_map_with_redaction($o, $r) {
 	$keys = array_keys($o);
 	$kvs = array();
@@ -60,6 +74,9 @@ function object_hash_map_with_redaction($o, $r) {
 	return hash("sha256", "d".join("", $kvs), true);
 }
 
+/**
+ * @ignore
+ */
 function object_hash_float($o) {
 	$s = "+";
 	if ($o < 0) {
@@ -97,6 +114,12 @@ function object_hash_float($o) {
 	return hash("sha256", "f".$s, true);
 }
 
+/**
+ * Calculate the objecthash for an object, with a custom redaction prefix string.
+ * @param mixed $o the object to calculate the objecthash for.
+ * @param string $r the string to use as a prefix to indicate that a string should be treated as a redacted subobject.
+ * @return string the objecthash for this object
+ */
 function object_hash_with_redaction($o, $r) {
 	global $NORMALIZE_FUNC;
 	switch (gettype($o)) {
@@ -133,20 +156,40 @@ function object_hash_with_redaction($o, $r) {
 	}
 }
 
+/**
+ * Calculate the objecthash for an object, assuming no redaction,
+ * @param mixed $o the object to calculate the objecthash for.
+ * @return string the objecthash for this object
+ */
 function object_hash($o) {
 	return object_hash_with_redaction($o, "");
 }
 
+/**
+ * Calculate the objecthash for an object, with standard redaction prefix string.
+ * @param mixed $o the object to calculate the objecthash for.
+ * @return string the objecthash for this object
+ */
 function object_hash_with_std_redaction($o) {
 	global $REDACTED_PREFIX;
 	return object_hash_with_redaction($o, $REDACTED_PREFIX);
 }
 
+/**
+ * Strip away object values that are marked as redacted, and switch nonce-tuples back to normal values.
+ * This is useful when an object has been stored with Redactable nonces added, but now it has been retrieved
+ * and normal processing needs to be performed on it. This method uses the standard redaction prefix.
+ * @param mixed $o the object that contains the redacted elements and nonce-tuples.
+ * @return mixed a new cleaned up object
+ */
 function shed_std_redactability($o) {
 	global $REDACTED_PREFIX;
 	return shed_redactability($o, $REDACTED_PREFIX);
 }
 
+/**
+ * @ignore
+ */
 function unredact_dict($o, $r) {
 	$rv = new stdClass();
 	$keys = array_keys($o);
@@ -175,6 +218,9 @@ function unredact_dict($o, $r) {
 	return $rv;
 }
 
+/**
+ * @ignore
+ */
 function unredact_list($o, $r) {
 	$rv = array();
 	for ($i = 0; $i < count($o); $i++) {
@@ -183,6 +229,14 @@ function unredact_list($o, $r) {
 	return $rv;
 }
 
+/**
+ * Strip away object values that are marked as redacted, and switch nonce-tuples back to normal values.
+ * This is useful when an object has been stored with Redactable nonces added, but now it has been retrieved
+ * and normal processing needs to be performed on it.
+ * @param mixed $o the object that contains the redacted elements and nonce-tuples.
+ * @param string $r the redaction prefix that indicates if a string represents a redacted sub-object.
+ * @return mixed a new cleaned up object
+ */
 function shed_redactability($o, $r) {
 	switch (gettype($o)) {
 	case "array":
@@ -200,36 +254,102 @@ function shed_redactability($o, $r) {
 	}
 }
 
+/**
+ * Base exception class used for all Continusec exceptions.
+ */
 class ContinusecException extends Exception {}
 
+/**
+ * Indicates the object cannot be found.
+ */
 class ObjectNotFoundException extends ContinusecException {}
+
+/**
+ * Indicates that either the wrong API Key is being used, or the account is suspended for other reasons (check billing status in console).
+ */
 class UnauthorizedAccessException extends ContinusecException {}
+
+/**
+ * Indicates that object being modified already exists.
+ */
 class ObjectConflictException extends ContinusecException {}
+
+/**
+ * Indicates the verification of a proof has failed.
+ */
 class VerificationFailedException extends ContinusecException {}
+
+/**
+ * Indicates invalid size or range in the request, e.g. tree size too large or small.
+ */
 class InvalidRangeException extends ContinusecException {}
+
+/**
+ * Indicates internal error that occurred on the server.
+ */
 class InternalErrorException extends ContinusecException {}
+
+/**
+ * Indicates that not all entries were returned. Typically due to requesting Json, but not
+ * storing as such.
+ */
 class NotAllEntriesReturnedException extends ContinusecException {}
 
+/**
+ * Main entry point for interacting with Continusec's Verifiable Data Structure APIs.
+ */
 class ContinusecClient {
+	/**
+	 * @ignore
+	 */
 	private $account;
+	/**
+	 * @ignore
+	 */
 	private $apiKey;
+	/**
+	 * @ignore
+	 */
 	private $baseUrl;
 
+	/**
+	 * Create a ContinusecClient for a given account with specified API Key and custom
+	 * base URL. This is normally only used for unit tests of the ContinusecClient API.
+	 *
+	 * @param string $account the account number, found on the "Settings" tab in the console.
+	 * @param string $apiKey the API Key, found on the "API Keys" tab in the console.
+	 * @param string $baseUrl the base URL to send API requests to.
+	 */
 	function ContinusecClient($account, $apiKey, $baseUrl="https://api.continusec.com") {
 		$this->account = $account;
 		$this->apiKey = $apiKey;
 		$this->baseUrl = $baseUrl;
 	}
 
+	/**
+	 * Return a pointer to a verifiable log that belongs to this account.
+	 *
+	 * @param string $name name of the log to access.
+	 * @return VerifiableLog an object that allows manipulation of the specified log.
+	 */
 	public function getVerifiableLog($name) {
 		return new VerifiableLog($this, "/log/".$name);
 	}
 
+	/**
+	 * Return a pointer to a verifiable map that belongs to this account.
+	 *
+	 * @param string $name name of the map to access.
+	 * @return VerifiableMap an object that allows manipulation of the specified map.
+	 */
 	public function getVerifiableMap($name) {
 		return new VerifiableMap($this, "/map/".$name);
 	}
 
-	/* not intended to be public, just for internal use by this package */
+	/**
+	 * @ignore
+	 * not intended to be public, just for internal use by this package
+	 */
 	public function makeRequest($method, $path, $data) {
 		$conn = curl_init();
 		curl_setopt($conn, CURLOPT_URL, $this->baseUrl . "/v1/account/" . $this->account . $path);
@@ -271,43 +391,79 @@ class ContinusecClient {
 	}
 }
 
+/**
+ * @ignore
+ */
 class VerifiableMap {
+	/**
+	 * @ignore
+	 */
 	private $client;
+	/**
+	 * @ignore
+	 */
 	private $path;
 
+	/**
+	 * @ignore
+	 */
 	function VerifiableMap($client, $path) {
 		$this->client = $client;
 		$this->path = $path;
 	}
 
+	/**
+	 * @ignore
+	 */
 	function create() {
 		$this->client->makeRequest("PUT", $this->path, null);
 	}
 
+	/**
+	 * @ignore
+	 */
 	function getMutationLog() {
 		return new VerifiableLog($this->client, $this.path."/log/mutation");
 	}
 
+	/**
+	 * @ignore
+	 */
 	function getTreeHeadLog() {
 		return new VerifiableLog($this->client, $this.path."/log/treehead");
 	}
 
+	/**
+	 * @ignore
+	 */
 	function set($key, $value) {
 		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key), $value);
 	}
 
+	/**
+	 * @ignore
+	 */
 	function setJson($key, $value) {
 		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson", $value);
 	}
 
+	/**
+	 * @ignore
+	 */
 	function setredactableJson($key, $value) {
 		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson/redactable", $value);
 	}
 
+	/**
+	 * @ignore
+	 */
 	function delete($key) {
 		$this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null);
 	}
 
+	/**
+	 * @ignore
+	 */
 	function internalGet($key, $treeSize, $format) {
 		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $format, null);
 
@@ -331,12 +487,18 @@ class VerifiableMap {
 	    ];
 	}
 
+	/**
+	 * @ignore
+	 */
 	function get($key, $treeSize) {
 		$rv = $this->internalGet($key, $treeSize, "");
 		$rv->format = "raw";
 		return $rv;
 	}
 
+	/**
+	 * @ignore
+	 */
 	function getJson($key, $treeSize) {
 		$rv = $this->internalGet($key, $treeSize, "/xjson");
 		$rv->format = "xjson";
@@ -346,12 +508,18 @@ class VerifiableMap {
 		return $rv;
 	}
 
+	/**
+	 * @ignore
+	 */
 	function getRedactedJson($key, $treeSize) {
 		$rv = $this->getJson($key, $treeSize);
 		$rv->json = shed_std_redactability($rv->json);
 		return $rv;
 	}
 
+	/**
+	 * @ignore
+	 */
 	function getTreeHash($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
 		return (object)[
@@ -361,134 +529,306 @@ class VerifiableMap {
 	}
 }
 
+/**
+ * Class to represent a log/map entry where no special processing is performed,
+ * that is, the bytes specified are stored as-is, and are used as-is for input
+ * to the Merkle Tree leaf function.
+ */
 class RawDataEntry {
+	/**
+	 * @ignore
+	 */
 	private $data;
 
+	/**
+	 * Construct a new RawDataEntry with the specified rawData.
+	 * @param string $data the raw data.
+	 */
 	function RawDataEntry($data) {
 		$this->data = $data;
 	}
 
+	/**
+	 * Get the suffix that should be added to the PUT/POST request for this data format.
+	 * @return string the suffix
+	 */
 	function getFormat() {
 		return "";
 	}
 
+	/**
+	 * Get the data for processing.
+	 * @return string the raw data
+	 */
 	function getData() {
 		return $this->data;
 	}
 
+	/**
+	 * Get the data that should be stored.
+	 * @return string the raw data
+	 */
 	function getDataForUpload() {
 		return $this->data;
 	}
 
+	/**
+	 * Calculate the leaf hash for this entry.
+	 * @return string the Merkle Tree leaf hash for this entry.
+	 */
 	function getLeafHash() {
 		return leaf_merkle_tree_hash($this->data);
 	}
 }
 
+/**
+ * Class to be used when entry MerkleTreeLeafs should be based on ObjectHash
+ * rather than the JSON bytes directly. Since there is no canonical encoding for JSON,
+ * it is useful to hash these objects in a more defined manner.
+ */
 class JsonEntry {
+	/**
+	 * @ignore
+	 */
 	private $data;
 
+	/**
+	 * Create entry object based on raw JSON data.
+	 * @param string $json the raw JSON data.
+	 */
 	function JsonEntry($json) {
 		$this->data = $json;
 	}
 
+	/**
+	 * Returns the format suffix needed for the internal POST to /entry.
+	 * @return string format suffix
+	 */
 	function getFormat() {
 		return "/xjson";
 	}
 
+	/**
+	 * Get data for processing.
+	 * @return string the raw data
+	 */
 	function getData() {
 		return $this->data;
 	}
 
+	/**
+	 * Get the data that should be stored.
+	 * @return string the raw data
+	 */
 	function getDataForUpload() {
 		return $this->data;
 	}
 
+	/**
+	 * Calculate the leaf hash for this entry.
+	 * @return string the Merkle Tree leaf hash for this entry.
+	 */
 	function getLeafHash() {
 		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
 	}
 }
 
+/**
+ * Class to represent JSON data should be made Redactable by the server upon upload.
+ * ie change all dictionary values to be nonce-value tuples and control access to fields
+ * based on the API key used to make the request.
+ */
 class RedactableJsonEntry {
+	/**
+	 * @ignore
+	 */
 	private $data;
 
+	/**
+	 * Create a new entry based on rawData JSON.
+	 * @param string $json representing the JSON for this entry.
+	 */
 	function RedactableJsonEntry($json) {
 		$this->data = $json;
 	}
 
+	/**
+	 * Returns the format suffix needed for the internal POST to /entry.
+	 * @return string format suffix
+	 */
 	function getFormat() {
 		return "/xjson/redactable";
 	}
 
+	/**
+	 * Get the data that should be stored.
+	 * @return string the raw data
+	 */
 	function getDataForUpload() {
 		return $this->data;
 	}
 }
 
+/**
+ * Class to represent redacted entries as returned by the server. Not to be confused
+ * with RedactableJsonEntry that should be used to represent objects that should
+ * be made Redactable by the server when uploaded.
+ */
 class RedactedJsonEntry {
+	/**
+	 * @ignore
+	 */
 	private $data;
 
+	/**
+	 * Package private constructor. Unlike the other Entry types, this should be considered package
+	 * private to prevent accidentaly confusion with RedactableJsonEntry.
+	 * which is what should be used to create an entry for upload.
+	 * @param string $json the raw data respresenting the redacted JSON.
+	 */
 	function RedactedJsonEntry($json) {
 		$this->data = $json;
 	}
 
+	/**
+	 * Get the underlying JSON for this entry, with all Redactable nonce-tuples and
+	 * redacted sub-objects stripped for ease of processing.
+	 * @return string the JSON with with Redactable artefacts shed.
+	 */
 	function getData() {
 		return json_encode(shed_std_redactability(json_decode($this->data)));
 	}
 
+	/**
+	 * Calculate the leaf hash for this entry.
+	 * @return string the Merkle Tree leaf hash for this entry.
+	 */
 	function getLeafHash() {
 		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
 	}
 }
 
+/**
+ * Response from adding entries to a log/map.
+ */
 class AddEntryResponse {
+	/**
+	 * @ignore
+	 */
 	private $leafHash;
 
+	/**
+	 * Package private constructor. Use VerifiableLog->addEntry to instantiate.
+	 * @param string $leafHash leaf hash of the entry.
+	 */
 	function AddEntryResponse($leafHash) {
 		$this->leafHash = $leafHash;
 	}
 
+	/**
+	 * Get the leaf hash for this entry.
+	 * @return string the leaf hash for this entry.
+	 */
 	function getLeafHash() {
 		return $this->leafHash;
 	}
 }
 
+/**
+ * Factory that produces RawDataEntry instances upon request.
+ */
 class RawDataEntryFactory {
+	/**
+	 * Instantiate a new entry from bytes as returned by server.
+	 * @param string $bytes the bytes as returned by the server.
+	 * @return RawDataEntry the new entry.
+	 */
 	function createFromBytes($bytes) {
 		return new RawDataEntry($bytes);
 	}
 
+	/**
+	 * Returns the suffix added to calls to GET /entry/xxx
+	 * @return string the suffix to add.
+	 */
 	function getFormat() {
 		return "";
 	}
 }
 
+/**
+ * Factory that produces JsonEntry instances upon request.
+ */
 class JsonEntryFactory {
+	/**
+	 * Instantiate a new entry from bytes as returned by server.
+	 * @param string $bytes the bytes as returned by the server.
+	 * @return RawDataEntry the new entry.
+	 */
 	function createFromBytes($bytes) {
 		return new JsonEntry($bytes);
 	}
 
+	/**
+	 * Returns the suffix added to calls to GET /entry/xxx
+	 * @return string the suffix to add.
+	 */
 	function getFormat() {
 		return "/xjson";
 	}
 }
 
+/**
+ * Factory that produces RedactedJsonEntry instances upon request.
+ */
 class RedactedJsonEntryFactory {
+	/**
+	 * Instantiate a new entry from bytes as returned by server.
+	 * @param string $bytes the bytes as returned by the server.
+	 * @return RawDataEntry the new entry.
+	 */
 	function createFromBytes($bytes) {
 		return new RedactedJsonEntry($bytes);
 	}
 
+	/**
+	 * Returns the suffix added to calls to GET /entry/xxx
+	 * @return string the suffix to add.
+	 */
 	function getFormat() {
 		return "/xjson";
 	}
 }
 
+/**
+ * Class to represent proof of inclusion of an entry in a log.
+ */
 class LogInclusionProof {
+	/**
+	 * @ignore
+	 */
 	private $treeSize;
+	/**
+	 * @ignore
+	 */
 	private $leafHash;
+	/**
+	 * @ignore
+	 */
 	private $leafIndex;
+	/**
+	 * @ignore
+	 */
 	private $auditPath;
 
+	/**
+	 * Create new LogInclusionProof.
+	 *
+	 * @param int $treeSize the tree size for which this proof is valid.
+	 * @param string $leafHash the Merkle Tree Leaf hash of the entry this proof is valid for.
+	 * @param int $leafIndex the index of this entry in the log.
+	 * @param array[] $auditPath the set of Merkle Tree nodes that apply to this entry in order to generate the root hash and prove inclusion.
+	 */
 	function LogInclusionProof($treeSize, $leafHash, $leafIndex, $auditPath) {
 		$this->treeSize = $treeSize;
 		$this->leafHash = $leafHash;
@@ -496,22 +836,42 @@ class LogInclusionProof {
 		$this->auditPath = $auditPath;
 	}
 
+	/**
+	 * Returns the tree size.
+	 * @return int the tree size.
+	 */
 	function getTreeSize() {
 		return $this->treeSize;
 	}
 
+	/**
+	 * Returns the leaf hash
+	 * @return string the leaf hash
+	 */
 	function getLeafHash() {
 		return $this->leafHash;
 	}
 
+	/**
+	 * Returns the leaf index.
+	 * @return int the leaf index.
+	 */
 	function getLeafIndex() {
 		return $this->leafIndex;
 	}
 
+	/**
+	 * Returns the audit path.
+	 * @return array[] the audit path for this proof.
+	 */
 	function getAuditPath() {
 		return $this->auditPath;
 	}
 
+	/**
+	 * For a given tree head, compare the root hash calculated by this proof to verify the tree head.
+	 * @param LogTreeHead $treeHead the tree head.
+	 */
 	function verify($treeHead) {
 		if (($this->leafIndex >= $treeHead->getTreeSize()) || ($this->leafIndex < 0)) {
 			throw new VerificationFailedException("Invalid proof (1)");
@@ -548,29 +908,66 @@ class LogInclusionProof {
 	}
 }
 
+/**
+ * Class to represent the result of a call to VerifiableLog->getConsistencyProof().
+ */
 class LogConsistencyProof {
+	/**
+	 * @ignore
+	 */
 	private $firstSize;
+	/**
+	 * @ignore
+	 */
 	private $secondSize;
+	/**
+	 * @ignore
+	 */
 	private $auditPath;
 
+	/**
+	 * Creates a new LogConsistencyProof for given tree sizes and auditPath.
+	 * @param int $firstSize the size of the first tree.
+	 * @param int $secondSize the size of the second tree.
+	 * @param array[] $auditPath the audit proof returned by the server.
+	 */
 	function LogConsistencyProof($firstSize, $secondSize, $auditPath) {
 		$this->firstSize = $firstSize;
 		$this->secondSize = $secondSize;
 		$this->auditPath = $auditPath;
 	}
 
+	/**
+	 * Returns the size of the first tree.
+	 * @return int the size of the first tree.
+	 */
 	function getFirstSize() {
 		return $this->firstSize;
 	}
 
+	/**
+	 * Returns the size of the second tree.
+	 * @return int the size of the second tree.
+	 */
 	function getSecondSize() {
 		return $this->secondSize;
 	}
 
+	/**
+	 * Returns the audit path.
+	 * @return array[] the audit path.
+	 */
 	function getAuditPath() {
 		return $this->auditPath;
 	}
 
+	/**
+	 * Verify that the consistency proof stored in this object can produce both the LogTreeHeads passed to this method.
+	 * i.e, verify the append-only nature of the log between first.getTreeSize() and second.getTreeSize().
+	 * @param LogTreeHead $firstTreeHead the tree hash for the first tree size
+	 * @param LogTreeHead $secondTreeHead the tree hash for the second tree size
+	 * @throws ContinusecException (most commonly VerificationFailedException) if the verification fails for any reason.
+	 */
 	function verify($firstTreeHead, $secondTreeHead) {
 		if ($firstTreeHead->getTreeSize() != $this->firstSize) {
 			throw new VerificationFailedException("Invalid proof (10)");
@@ -636,43 +1033,96 @@ class LogConsistencyProof {
 	}
 }
 
+/**
+ * Class for Tree Hash as returned for a log with a given size.
+ */
 class LogTreeHead {
+	/**
+	 * @ignore
+	 */
 	private $treeSize;
+	/**
+	 * @ignore
+	 */
 	private $rootHash;
 
+	/**
+	 * Constructor.
+	 * @param int $treeSize the tree size the root hash is valid for.
+	 * @param string $rootHash the root hash for the log of this tree size.
+	 */
 	function LogTreeHead($treeSize, $rootHash) {
 		$this->treeSize = $treeSize;
 		$this->rootHash = $rootHash;
 	}
 
+	/**
+	 * Returns the tree size for this tree hash.
+	 * @return int the tree size for this tree hash.
+	 */
 	function getTreeSize() {
 		return $this->treeSize;
 	}
 
+	/**
+	 * Returns the root hash for this tree size.
+	 * @return string the root hash for this tree size.
+	 */
 	function getRootHash() {
 		return $this->rootHash;
 	}
 
 }
 
+/**
+ * Class to interact with verifiable logs. Instantiate by callling ContinusecClient->getVerifiableLog().
+ */
 class VerifiableLog {
+	/**
+	 * @ignore
+	 */
 	private $client;
+	/**
+	 * @ignore
+	 */
 	private $path;
 
+	/**
+	 * Package private constructor. Use  ContinusecClient->getVerifiableLog() to instantiate.
+	 * @param ContinusecClient $client the client (used for requests) that this log belongs to
+	 * @param string $path the relative path to the log.
+	 */
 	function VerifiableLog($client, $path) {
 		$this->client = $client;
 		$this->path = $path;
 	}
 
+	/**
+	 * Send API call to create this log. This should only be called once, and subsequent
+	 * calls will cause an exception to be generated.
+	 */
 	function create() {
 		$this->client->makeRequest("PUT", $this->path, null);
 	}
 
+	/**
+	 * Get the tree hash for given tree size.
+	 *
+	 * @param int $treeSize the tree size to retrieve the hash for. Pass 0 to get the
+	 * latest tree size.
+	 * @return LogTreeHead the tree hash for the given size (includes the tree size actually used, if unknown before running the query).
+	 */
 	function getTreeHead($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
 		return new LogTreeHead($obj->tree_size, base64_decode($obj->tree_hash));
 	}
 
+	/**
+	 * Get an inclusion proof for a given item.
+	 * @param int $treeSize the tree size for which the inclusion proof should be returned. This is usually as returned by LogTreeHead->getTreeSize().
+	 * @param string $leafHash the entry for which the inclusion proof should be returned. Note that AddEntryResponse, and the *Entry classes implement getLeafHash().
+	 * @return LogInclusionProof a log inclusion proof object that can be verified against a given tree hash.
+	 */
 	function getInclusionProof($treeSize, $leafHash) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($leafHash), null)["body"]);
 		$auditPath = array();
@@ -682,6 +1132,13 @@ class VerifiableLog {
 		return new LogInclusionProof($treeSize, $leafHash, $obj->leaf_index, $auditPath);
 	}
 
+	/**
+	 * Get an inclusion proof for a specified tree size and leaf index. This is not used by typical clients,
+	 * however it can be useful for audit operations and debugging tools. Typical clients will use getInclusionProof(treeSize, leafHash).
+	 * @param int $treeSize the tree size on which to base the proof.
+	 * @param int $leafIndex the leaf index for which to retrieve the inclusion proof.
+	 * @return LogInclusionProof a partially filled in LogInclusionProof (note it will not include the MerkleTreeLeaf hash for the item).
+	 */
 	function getInclusionProofByIndex($treeSize, $leafIndex) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/" . $leafIndex, null)["body"]);
 		$auditPath = array();
@@ -691,6 +1148,12 @@ class VerifiableLog {
 		return new LogInclusionProof($treeSize, null, $obj->leaf_index, $auditPath);
 	}
 
+	/**
+	 * Get an consistency proof to show how a log is append-only between two LogTreeHeads.
+	 * @param int $firstSize the first log tree hash, typically retrieved by getTreeHead()->getTreeSize() and persisted.
+	 * @param int #secondSize the second log tree hash, also retrieved by getTreeHead()->getTreeSize() and persisted once verified.
+	 * @return LogConsistencyProof a log consistency proof object that must be verified.
+	 */
 	function getConsistencyProof($firstSize, $secondSize) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $secondSize . "/consistency/" . $firstSize, null)["body"]);
 		$auditPath = array();
@@ -700,15 +1163,39 @@ class VerifiableLog {
 		return new LogConsistencyProof($firstSize, $secondSize, $auditPath);
 	}
 
+	/**
+	 * Send API call to add an entry to the log. Note the entry is added asynchronously, so while
+	 * the library will return as soon as the server acknowledges receipt of entry, it may not be
+	 * reflected in the tree hash (or inclusion proofs) until the server has sequenced the entry.
+	 *
+	 * @param mixed $entry the entry to add, often RawDataEntry, JsonEntry or RedactableJsonEntry.
+	 * @return AddEntryResponse add entry response, which includes the Merkle Tree Leaf hash of the entry added.
+	 */
 	function addEntry($entry) {
 		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry" . $entry->getFormat(), $entry->getDataForUpload())["body"]);
 		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
+	/**
+	 * Get the entry at the specified index.
+	 *
+	 * @param int $idx the index to retrieve (starts at zero).
+	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
+	 * @return string the entry requested.
+	 */
 	function getEntry($idx, $factory) {
 		return $factory->createFromBytes($this->client->makeRequest("GET", $this->path . "/entry/" . $idx . $factory->getFormat(), null)["body"]);
 	}
 
+	/**
+	 * Returns multiple entries. If for any
+	 * reason not all entries are returned, the array will be shorter than the amount requested.
+	 *
+	 * @param int $startIdx the first entry to return
+	 * @param int $endIdx the last entry to return
+	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
+	 * @return array[] an array for the entries requested.
+	 */
 	function getEntries($startIdx, $endIdx, $factory) {
 	    $rv = array();
 		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx . $factory->getFormat(), null)["body"])->entries as $a) {
@@ -717,6 +1204,14 @@ class VerifiableLog {
 		return $rv;
 	}
 
+	/**
+	 * Block until the log is able to produce a LogTreeHead that includes the specified $mtlHash.
+	 * This polls getTreeHead() and getInclusionProof() until
+	 * such time as a new tree hash is produced that includes the given $mtlHash. Exponential back-off
+	 * is used when no tree hash is available. This is intended for test use.
+	 * @param string $mtlHash the leaf we should block until included. Typically this is a from an AddEntryResponse as returned by addEntry().
+	 * @return LogTreeHead the first tree hash that includes this leaf (proof is not verified).
+	 */
 	function blockUntilPresent($mtlHash) {
 		$lastHead = -1;
 		$secsToSleep = 0;
@@ -741,6 +1236,13 @@ class VerifiableLog {
 		}
 	}
 
+	/**
+	 * FetchVerifiedTreeHead is a utility method to fetch a new LogTreeHead and verifies that it is consistent with
+	 * a tree head earlier fetched and persisted. To avoid potentially masking client tree head storage issues,
+	 * it is an error to pass null. For first use, pass new LogTreeHead(0, null), which will bypass consistency proof checking.
+	 * @param LogTreeHead $prev a previously persisted log tree head, or special value new LogTreeHead(0, null) on first run.
+	 * @return LogTreeHead a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
+	 */
 	function fetchVerifiedTreeHead($prev) {
 		// Fetch latest from server
 		$head = $this->getTreeHead(0);
@@ -762,6 +1264,16 @@ class VerifiableLog {
 		}
 	}
 
+	/**
+	 * VerifySuppliedInclusionProof is a utility method that fetches any required tree heads that are needed
+	 * to verify a supplied log inclusion proof. Additionally it will ensure that any fetched tree heads are consistent
+	 * with any prior supplied LogTreeHead.  o avoid potentially masking client tree head storage issues,
+	 * it is an error to pass null. For first use, pass new LogTreeHead(0, null), which will
+	 * bypass consistency proof checking.
+	 * @param LogTreeHead $prev a previously persisted log tree head, or special value new LogTreeHead(0, null)
+	 * @param LogInclusionProof $proof an inclusion proof that may be for a different tree size than prev.getTreeSize()
+	 * @return LogTreeHead the verified (for consistency) LogTreeHead that was used for successful verification (of inclusion) of the supplied proof. This may be older than the LogTreeHead passed in.
+	 */
 	function verifySuppliedInclusionProof($prev, $proof) {
 		$headForInclProof = null;
 		if ($proof->getTreeSize() == $prev->getTreeSize()) {
@@ -784,6 +1296,15 @@ class VerifiableLog {
 		return $headForInclProof;
 	}
 
+	/**
+	 * Utility method for auditors that wish to audit the full content of a log, as well as the log operation.
+	 * This method will retrieve all entries in batch from the log, and ensure that the root hash in head can be confirmed to accurately represent the contents
+	 * of all of the log entries. If prev is not null, then additionally it is proven that the root hash in head is consistent with the root hash in prev.
+	 * @param LogTreeHead $prev a previous LogTreeHead representing the set of entries that have been previously audited. To avoid potentially masking client tree head storage issues, it is an error to pass NULL. To indicate this is has not previously been audited, pass {@link LogTreeHead#ZeroLogTreeHead},
+	 * @param LogTreeHead $head the LogTreeHead up to which we wish to audit the log. Upon successful completion the caller should persist this for a future iteration.
+	 * @param mixed $auditor caller must implement auditLogEntry(int, *Entry) which is called sequentially for each index / log entry as it is encountered.
+	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
+	 */
 	function auditLogEntries($prev, $head, $factory, $auditor) {
 		if (($prev == null) || $prev->getTreeSize() < $head->getTreeSize()) {
 			$merkleTreeStack = [];
@@ -838,14 +1359,28 @@ class VerifiableLog {
 	}
 }
 
+/**
+ * Calculate the Merkle Tree Leaf Hash for an object (HASH(chr(0) || b)).
+ * @param string $b the input to the leaf hash
+ * @return string the leaf hash.
+ */
 function leaf_merkle_tree_hash($b) {
     return hash("sha256", chr(0) . $b, true);
 }
 
+/**
+ * Calculate the Merkle Tree Node Hash for an existing left and right hash (HASH(chr(1) || l || r)).
+ * @param string $l the left node hash.
+ * @param string $r the right node hash.
+ * @return string the node hash for the combination.
+ */
 function node_merkle_tree_hash($l, $r) {
     return hash("sha256", chr(1) . $l . $r, true);
 }
 
+/**
+ * @ignore
+ */
 function calc_k($n) {
     $k = 1;
     while (($k << 1) < $n) {
@@ -854,10 +1389,19 @@ function calc_k($n) {
     return $k;
 }
 
+/**
+ * @ignore
+ */
 function is_pow_2($n) {
     return calc_k($n + 1) == $n;
 }
 
+/**
+ * Create the path in a sparse merkle tree for a given key. ie a boolean array representing
+ * the big-endian index of the the hash of the key.
+ * @param string $key the key
+ * @return array[] a length 256 array of booleans representing left (false) and right (true) path in the Sparse Merkle Tree.
+ */
 function construct_map_key_path($key) {
     $h = hash("sha256", $key, true);
     $rv = array_fill(0, 256, false);
@@ -872,6 +1416,9 @@ function construct_map_key_path($key) {
     return $rv;
 }
 
+/**
+ * @ignore
+ */
 function verify_map_inclusion_proof($head, $value) {
     global $DEFAULT_LEAF_VALUES;
 
@@ -894,6 +1441,10 @@ function verify_map_inclusion_proof($head, $value) {
     }
 }
 
+/**
+ * Generate the set of 257 default values for every level in a sparse Merkle Tree.
+ * @return string[] array of length 257 default values.
+ */
 function generate_map_default_leaf_values() {
     $rv = array_fill(0, 257, null);
     $rv[256] = leaf_merkle_tree_hash("");
@@ -903,5 +1454,8 @@ function generate_map_default_leaf_values() {
     return $rv;
 }
 
+/**
+ * @ignore
+ */
 $DEFAULT_LEAF_VALUES = generate_map_default_leaf_values();
 ?>

@@ -1,0 +1,7 @@
+To test:
+
+php src/continusec_test.go
+
+To generate docs:
+
+php ~/Downloads/phpDocumentor.phar -d src -t target
