@@ -210,6 +210,64 @@ function test_client() {
 
 	$inclProof = $log->getInclusionProof($head103->getTreeSize(), $redEnt->getLeafHash());
 	$inclProof->verify($head103);
+
+	$map = $client->getVerifiableMap("nnewtestmap");
+	try {
+		$map->getTreeHead(0);
+		throw new Exception();
+	} catch (ObjectNotFoundException $e) {
+		// good
+	}
+	$map->create();
+	try {
+		$map->create();
+		throw new Exception();
+	} catch (ObjectConflictException $e) {
+		// good
+	}
+
+	$map->set("foo", new RawDataEntry("foo"));
+	$map->set("fiz", new JsonEntry("{\"name\":\"adam\",\"ssn\":123.45}"));
+	$waitResponse = $map->set("foz", new RedactableJsonEntry("{\"name\":\"adam\",\"ssn\":123.45}"));
+
+    for ($i = 0; $i < 100; $i++) {
+        $map->set("foo".$i, new RawDataEntry("fooval".$i));
+    }
+
+    $map->delete("foo");
+    $map->delete("foodddd");
+    $map->delete("foo27");
+
+    $mlHead = $map->getMutationLog()->blockUntilPresent($waitResponse->getLeafHash());
+    if ($mlHead->getTreeSize() != 106) {
+		throw new Exception();
+    }
+
+    $mrHead = $map->blockUntilSize($mlHead->getTreeSize());
+    if ($mrHead->getMutationLogTreeHead()->getTreeSize() != 106) {
+		throw new Exception();
+    }
+
+    $entryResp = $map->get("foo", $mrHead, new RawDataEntryFactory());
+    $entryResp->verify($mrHead);
+    $dd = $entryResp->getValue()->getData();
+    if (strlen($dd) > 0) {
+		throw new Exception();
+    }
+
+    $entryResp = $map->get("foo-29", $mrHead, new RawDataEntryFactory());
+    $entryResp->verify($mrHead);
+    $dd = $entryResp->getValue()->getData();
+    if (strlen($dd) > 0) {
+		throw new Exception();
+    }
+
+    $entryResp = $map->get("foo29", $mrHead, new RawDataEntryFactory());
+    $entryResp->verify($mrHead);
+    $dd = $entryResp->getValue()->getData();
+    if ($dd != "fooval29") {
+		throw new Exception();
+    }
 }
 
 /**

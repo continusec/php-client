@@ -7,7 +7,7 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+	   http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
@@ -423,109 +423,141 @@ class VerifiableMap {
 	 * @ignore
 	 */
 	function getMutationLog() {
-		return new VerifiableLog($this->client, $this.path."/log/mutation");
+		return new VerifiableLog($this->client, $this->path."/log/mutation");
 	}
 
 	/**
 	 * @ignore
 	 */
 	function getTreeHeadLog() {
-		return new VerifiableLog($this->client, $this.path."/log/treehead");
+		return new VerifiableLog($this->client, $this->path."/log/treehead");
 	}
 
 	/**
 	 * @ignore
 	 */
-	function set($key, $value) {
-		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key), $value);
-	}
-
-	/**
-	 * @ignore
-	 */
-	function setJson($key, $value) {
-		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson", $value);
-	}
-
-	/**
-	 * @ignore
-	 */
-	function setredactableJson($key, $value) {
-		$this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . "/xjson/redactable", $value);
+	function set($key, $entry) {
+		$obj = json_decode($this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . $entry->getFormat(), $entry->getDataForUpload())["body"]);
+		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
 	/**
 	 * @ignore
 	 */
 	function delete($key) {
-		$this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null);
+		$obj = json_decode($this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null)["body"]);
+		return new AddEntryResponse(base64_decode($obj->leaf_hash));
+	}
+
+
+	/**
+	 * @ignore
+	 */
+	function get($key, $mapHead, $factory) {
+		$treeSize = $mapHead->getMutationLogTreeHead()->getTreeSize();
+		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $factory->getFormat(), null);
+
+		$auditPath = array_fill(0, 256, null);
+		$lwrHdr = strtolower($rv["headers"]);
+
+		/* Sigh... surely PHP has a built-in header parser?? */
+		$pos = strpos($lwrHdr, "\r\nx-verified-proof:", 0);
+		while ($pos !== false) {
+			$end = strpos($lwrHdr, "\r\n", $pos + 19);
+			$part = trim(substr($lwrHdr, $pos + 19, $end - ($pos + 19)));
+			$slash = strpos($part, "/");
+			$auditPath[intval(substr($part, 0, $slash))] = hex2bin(substr($part, $slash + 1));
+			$pos = strpos($lwrHdr, "\r\nx-verified-proof:", $end);
+		}
+		$pos = strpos($lwrHdr, "\r\nx-verified-treesize:", 0);
+		if ($pos !== false) {
+			$end = strpos($lwrHdr, "\r\n", $pos + 22);
+			$part = trim(substr($lwrHdr, $pos + 22, $end - ($pos + 22)));
+			$actTreeSize = intval($part);
+		}
+
+		return new MapGetEntryResponse($key, $factory->createFromBytes($rv["body"]), $actTreeSize, $auditPath);
 	}
 
 	/**
 	 * @ignore
 	 */
-	function internalGet($key, $treeSize, $format) {
-		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $format, null);
-
-	    $auditPath = array_fill(0, 256, null);
-	    $lwrHdr = strtolower($rv["headers"]);
-
-	    /* Sigh... surely PHP has a built-in header parser?? */
-	    $pos = strpos($lwrHdr, "\r\nx-verified-proof:", 0);
-	    while ($pos !== false) {
-	        $end = strpos($lwrHdr, "\r\n", $pos + 19);
-	        $part = trim(substr($lwrHdr, $pos + 19, $end - ($pos + 19)));
-	        $slash = strpos($part, "/");
-	        $auditPath[intval(substr($part, 0, $slash))] = hex2bin(substr($part, $slash + 1));
-	        $pos = strpos($lwrHdr, "\r\nx-verified-proof:", $end);
-	    }
-
-	    return (object)[
-	        "key"=>$key,
-	        "value"=>$rv["body"],
-	        "audit_path"=>$auditPath
-	    ];
-	}
-
-	/**
-	 * @ignore
-	 */
-	function get($key, $treeSize) {
-		$rv = $this->internalGet($key, $treeSize, "");
-		$rv->format = "raw";
-		return $rv;
-	}
-
-	/**
-	 * @ignore
-	 */
-	function getJson($key, $treeSize) {
-		$rv = $this->internalGet($key, $treeSize, "/xjson");
-		$rv->format = "xjson";
-		$rv->rawJson = $rv->value;
-		$rv->json = json_decode($rv->rawJson);
-		$rv->value = object_hash_with_std_redaction($rv->json);
-		return $rv;
-	}
-
-	/**
-	 * @ignore
-	 */
-	function getRedactedJson($key, $treeSize) {
-		$rv = $this->getJson($key, $treeSize);
-		$rv->json = shed_std_redactability($rv->json);
-		return $rv;
-	}
-
-	/**
-	 * @ignore
-	 */
-	function getTreeHash($treeSize=0) {
+	function getTreeHead($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
-		return (object)[
-		    "tree_size"=>$obj->mutation_log->tree_size,
-		    "root_hash"=>base64_decode($obj->map_hash)
-		];
+		return new MapTreeHead(base64_decode($obj->map_hash), new LogTreeHead($obj->mutation_log->tree_size, base64_decode($obj->mutation_log->tree_hash)));
+	}
+
+	function blockUntilSize($treeSize) {
+		$lastHead = -1;
+		$secsToSleep = 0;
+		while (true) {
+			$lth = $this->getTreeHead(0);
+			if ($lth->getMutationLogTreeHead()->getTreeSize() > $lastHead) {
+				$lastHead = $lth->getMutationLogTreeHead()->getTreeSize();
+				if ($lastHead >= $treeSize) {
+					return $lth;
+				}
+				// since we got a new tree head, reset sleep time
+				$secsToSleep = 1;
+			} else {
+				// no luck, snooze a bit longer
+				$secsToSleep *= 2;
+			}
+			sleep($secsToSleep);
+		}
+	}
+}
+
+class MapGetEntryResponse {
+	private $key, $value, $treeSize, $auditPath;
+
+	function MapGetEntryResponse($key, $value, $treeSize, $auditPath) {
+		$this->key = $key;
+		$this->value = $value;
+		$this->treeSize = $treeSize;
+		$this->auditPath = $auditPath;
+	}
+
+	function getKey() {
+		return $this->key;
+	}
+
+	function getValue() {
+		return $this->value;
+	}
+
+	function getTreeSize() {
+		return $this->treeSize;
+	}
+
+	function getAuditPath() {
+		return $this->auditPath;
+	}
+
+	function verify($head) {
+		global $DEFAULT_LEAF_VALUES;
+
+		if ($head->getMutationLogTreeHead()->getTreeSize() != $this->treeSize) {
+			throw new VerificationFailedException("Invalid proof (21)");
+		}
+
+		$kp = construct_map_key_path($this->key);
+		$t = $this->value->getLeafHash();
+		for ($i = 255; $i >= 0; $i--) {
+			$p = $this->auditPath[$i];
+			if ($p == null) {
+				$p = $DEFAULT_LEAF_VALUES[$i+1];
+			}
+			if ($kp[$i]) {
+				$t = node_merkle_tree_hash($p, $t);
+			} else {
+				$t = node_merkle_tree_hash($t, $p);
+			}
+		}
+
+		if ($t != $head->getRootHash()) {
+			throw new VerificationFailedException("Invalid proof (20)");
+		}
 	}
 }
 
@@ -1074,6 +1106,25 @@ class LogTreeHead {
 
 }
 
+class MapTreeHead {
+	private $mutationLogTreeHead;
+	private $rootHash;
+
+	function MapTreeHead($rootHash, $mutationLogTreeHead) {
+		$this->rootHash = $rootHash;
+		$this->mutationLogTreeHead = $mutationLogTreeHead;
+	}
+
+	function getMutationLogTreeHead() {
+		return $this->mutationLogTreeHead;
+	}
+
+	function getRootHash() {
+		return $this->rootHash;
+	}
+}
+
+
 /**
  * Class to interact with verifiable logs. Instantiate by callling ContinusecClient->getVerifiableLog().
  */
@@ -1127,7 +1178,7 @@ class VerifiableLog {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($leafHash), null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
-		    array_push($auditPath, base64_decode($p));
+			array_push($auditPath, base64_decode($p));
 		}
 		return new LogInclusionProof($treeSize, $leafHash, $obj->leaf_index, $auditPath);
 	}
@@ -1143,7 +1194,7 @@ class VerifiableLog {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/" . $leafIndex, null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
-		    array_push($auditPath, base64_decode($p));
+			array_push($auditPath, base64_decode($p));
 		}
 		return new LogInclusionProof($treeSize, null, $obj->leaf_index, $auditPath);
 	}
@@ -1158,7 +1209,7 @@ class VerifiableLog {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $secondSize . "/consistency/" . $firstSize, null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
-		    array_push($auditPath, base64_decode($p));
+			array_push($auditPath, base64_decode($p));
 		}
 		return new LogConsistencyProof($firstSize, $secondSize, $auditPath);
 	}
@@ -1197,9 +1248,9 @@ class VerifiableLog {
 	 * @return array[] an array for the entries requested.
 	 */
 	function getEntries($startIdx, $endIdx, $factory) {
-	    $rv = array();
+		$rv = array();
 		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx . $factory->getFormat(), null)["body"])->entries as $a) {
-		    array_push($rv, $factory->createFromBytes(base64_decode($a->leaf_data)));
+			array_push($rv, $factory->createFromBytes(base64_decode($a->leaf_data)));
 		}
 		return $rv;
 	}
@@ -1365,7 +1416,7 @@ class VerifiableLog {
  * @return string the leaf hash.
  */
 function leaf_merkle_tree_hash($b) {
-    return hash("sha256", chr(0) . $b, true);
+	return hash("sha256", chr(0) . $b, true);
 }
 
 /**
@@ -1375,25 +1426,25 @@ function leaf_merkle_tree_hash($b) {
  * @return string the node hash for the combination.
  */
 function node_merkle_tree_hash($l, $r) {
-    return hash("sha256", chr(1) . $l . $r, true);
+	return hash("sha256", chr(1) . $l . $r, true);
 }
 
 /**
  * @ignore
  */
 function calc_k($n) {
-    $k = 1;
-    while (($k << 1) < $n) {
-        $k <<= 1;
-    }
-    return $k;
+	$k = 1;
+	while (($k << 1) < $n) {
+		$k <<= 1;
+	}
+	return $k;
 }
 
 /**
  * @ignore
  */
 function is_pow_2($n) {
-    return calc_k($n + 1) == $n;
+	return calc_k($n + 1) == $n;
 }
 
 /**
@@ -1403,42 +1454,17 @@ function is_pow_2($n) {
  * @return array[] a length 256 array of booleans representing left (false) and right (true) path in the Sparse Merkle Tree.
  */
 function construct_map_key_path($key) {
-    $h = hash("sha256", $key, true);
-    $rv = array_fill(0, 256, false);
-    for ($i = 0; $i < 32; $i++) {
-        $b = ord($h[$i]);
-        for ($j = 0; $j < 8; $j++) {
-            if ((($b>>$j)&1)==1) {
-                $rv[($i<<3)+7-$j] = true;
-            }
-        }
-    }
-    return $rv;
-}
-
-/**
- * @ignore
- */
-function verify_map_inclusion_proof($head, $value) {
-    global $DEFAULT_LEAF_VALUES;
-
-    $kp = construct_map_key_path($value->key);
-    $t = leaf_merkle_tree_hash($value->value);
-    for ($i = 255; $i >= 0; $i--) {
-        $p = $value->audit_path[$i];
-        if ($p == null) {
-            $p = $DEFAULT_LEAF_VALUES[$i+1];
-        }
-        if ($kp[$i]) {
-            $t = node_merkle_tree_hash($p, $t);
-        } else {
-            $t = node_merkle_tree_hash($t, $p);
-        }
-    }
-
-    if ($t != $head->root_hash) {
-        throw new Exception("Invalid proof (10)");
-    }
+	$h = hash("sha256", $key, true);
+	$rv = array_fill(0, 256, false);
+	for ($i = 0; $i < 32; $i++) {
+		$b = ord($h[$i]);
+		for ($j = 0; $j < 8; $j++) {
+			if ((($b>>$j)&1)==1) {
+				$rv[($i<<3)+7-$j] = true;
+			}
+		}
+	}
+	return $rv;
 }
 
 /**
@@ -1446,12 +1472,12 @@ function verify_map_inclusion_proof($head, $value) {
  * @return string[] array of length 257 default values.
  */
 function generate_map_default_leaf_values() {
-    $rv = array_fill(0, 257, null);
-    $rv[256] = leaf_merkle_tree_hash("");
-    for ($i = 255; $i >= 0; $i--) {
-        $rv[$i] = node_merkle_tree_hash($rv[$i+1], $rv[$i+1]);
-    }
-    return $rv;
+	$rv = array_fill(0, 257, null);
+	$rv[256] = leaf_merkle_tree_hash("");
+	for ($i = 255; $i >= 0; $i--) {
+		$rv[$i] = node_merkle_tree_hash($rv[$i+1], $rv[$i+1]);
+	}
+	return $rv;
 }
 
 /**
