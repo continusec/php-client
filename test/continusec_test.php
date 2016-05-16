@@ -97,7 +97,7 @@ function test_client() {
 	$log->addEntry(new JsonEntry("{\"name\":\"adam\",\"ssn\":123.45}"));
 	$log->addEntry(new RedactableJsonEntry("{\"name\":\"adam\",\"ssn\":123.45}"));
 
-	$log->blockUntilPresent($log->addEntry(new RawDataEntry("foo"))->getLeafHash());
+	$log->blockUntilPresent($log->addEntry(new RawDataEntry("foo")));
 
 	$head = $log->getTreeHead(0);
 	if ($head->getTreeSize() != 3) {
@@ -108,21 +108,19 @@ function test_client() {
 		$log->addEntry(new RawDataEntry("foo-".$i));
 	}
 
-	$head103 = $log->fetchVerifiedTreeHead($head);
+	$head103 = $log->getVerifiedLatestTreeHead($head);
 	if ($head103->getTreeSize() != 103) {
 		throw new Exception();
 	}
 
 	try {
-		$rde = new RawDataEntry("foo27");
-		$log->getInclusionProof($head103->getTreeSize(), $rde->getLeafHash());
+		$log->getInclusionProof($head103->getTreeSize(), new RawDataEntry("foo27"));
 		throw new Exception();
 	} catch (ObjectNotFoundException $e) {
 		// good
 	}
 
-	$rde = new RawDataEntry("foo-27");
-	$inclProof = $log->getInclusionProof($head103->getTreeSize(), $rde->getLeafHash());
+	$inclProof = $log->getInclusionProof($head103->getTreeSize(), new RawDataEntry("foo-27"));
 	$inclProof->verify($head103);
 
 	try {
@@ -146,12 +144,11 @@ function test_client() {
 		// good
 	}
 
-	$rde = new RawDataEntry("foo");
-	$inclProof = $log->getInclusionProof(10, $rde->getLeafHash());
+	$inclProof = $log->getInclusionProof(10, new RawDataEntry("foo"));
 	$h10 = $log->verifySuppliedInclusionProof($head103, $inclProof);
 
 	$c = new Counter();
-	$log->auditLogEntries(new LogTreeHead(0, null), $head103, new RawDataEntryFactory(), $c);
+	$log->verifyEntries(new LogTreeHead(0, null), $head103, new RawDataEntryFactory(), $c);
 	if ($c->getCount() != 103) {
 		throw new Exception();
 	}
@@ -159,7 +156,7 @@ function test_client() {
 	$h1 = $log->getTreeHead(1);
 	$c = new Counter();
 	try {
-		$log->auditLogEntries($h1, $head103, new JsonEntryFactory(), $c);
+		$log->verifyEntries($h1, $head103, new JsonEntryFactory(), $c);
 	} catch (NotAllEntriesReturnedException $e) {
 		// good
 	}
@@ -169,20 +166,18 @@ function test_client() {
 
 	$h3 = $log->getTreeHead(3);
 	$c = new Counter();
-	$log->auditLogEntries($h1, $h3, new JsonEntryFactory(), $c);
+	$log->verifyEntries($h1, $h3, new JsonEntryFactory(), $c);
 	if ($c->getCount() != 2) {
 		throw new Exception();
 	}
 
 	$c = new Counter();
-	$log->auditLogEntries($head50, $head103, new RawDataEntryFactory(), $c);
+	$log->verifyEntries($head50, $head103, new RawDataEntryFactory(), $c);
 	if ($c->getCount() != 53) {
 		throw new Exception();
 	}
 
-	$je = new JsonEntry("{    \"ssn\":  123.4500 ,   \"name\" :  \"adam\"}");
-	$inclProof = $log->getInclusionProof($head103->getTreeSize(), $je->getLeafHash());
-	$inclProof->verify($head103);
+	$log->verifyInclusion($head103, new JsonEntry("{    \"ssn\":  123.4500 ,   \"name\" :  \"adam\"}"));
 
 	$redEnt = $log->getEntry(2, new RedactedJsonEntryFactory());
 	$dd = $redEnt->getData();
@@ -193,8 +188,7 @@ function test_client() {
 		throw new Exception();
 	}
 
-	$inclProof = $log->getInclusionProof($head103->getTreeSize(), $redEnt->getLeafHash());
-	$inclProof->verify($head103);
+	$log->verifyInclusion($head103, $redEnt);
 
 	$client = new ContinusecClient("7981306761429961588", "allseeing", "http://localhost:8080");
 	$log = $client->getVerifiableLog("newtestlog");
@@ -208,8 +202,7 @@ function test_client() {
 		throw new Exception();
 	}
 
-	$inclProof = $log->getInclusionProof($head103->getTreeSize(), $redEnt->getLeafHash());
-	$inclProof->verify($head103);
+	$log->verifyInclusion($head103, $redEnt);
 
 	$map = $client->getVerifiableMap("nnewtestmap");
 	try {
@@ -238,7 +231,7 @@ function test_client() {
     $map->delete("foodddd");
     $map->delete("foo27");
 
-    $mlHead = $map->getMutationLog()->blockUntilPresent($waitResponse->getLeafHash());
+    $mlHead = $map->getMutationLog()->blockUntilPresent($waitResponse);
     if ($mlHead->getTreeSize() != 106) {
 		throw new Exception();
     }
@@ -248,26 +241,40 @@ function test_client() {
 		throw new Exception();
     }
 
-    $entryResp = $map->get("foo", $mrHead, new RawDataEntryFactory());
+    $entryResp = $map->get("foo", $mrHead->getTreeSize(), new RawDataEntryFactory());
     $entryResp->verify($mrHead);
     $dd = $entryResp->getValue()->getData();
     if (strlen($dd) > 0) {
 		throw new Exception();
     }
 
-    $entryResp = $map->get("foo-29", $mrHead, new RawDataEntryFactory());
+    $entryResp = $map->get("foo-29", $mrHead->getTreeSize(), new RawDataEntryFactory());
     $entryResp->verify($mrHead);
     $dd = $entryResp->getValue()->getData();
     if (strlen($dd) > 0) {
 		throw new Exception();
     }
 
-    $entryResp = $map->get("foo29", $mrHead, new RawDataEntryFactory());
+    $entryResp = $map->get("foo29", $mrHead->getTreeSize(), new RawDataEntryFactory());
     $entryResp->verify($mrHead);
     $dd = $entryResp->getValue()->getData();
     if ($dd != "fooval29") {
 		throw new Exception();
     }
+
+    $mapState106 = $map->getVerifiedLatestMapState(null);
+    $map->getVerifiedMapState($mapState106, 0);
+    $mapState2 = $map->getVerifiedMapState($mapState106, 2);
+
+    if ($mapState2->getTreeSize() != 2) {
+        throw new Exception();
+    }
+
+    $ve = $map->getVerifiedValue("foo", $mapState2, new RawDataEntryFactory());
+    if ($ve->getData() != "foo") {
+        throw new Exception();
+    }
+
 }
 
 /**

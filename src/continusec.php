@@ -453,8 +453,7 @@ class VerifiableMap {
 	/**
 	 * @ignore
 	 */
-	function get($key, $mapHead, $factory) {
-		$treeSize = $mapHead->getMutationLogTreeHead()->getTreeSize();
+	function get($key, $treeSize, $factory) {
 		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $factory->getFormat(), null);
 
 		$auditPath = array_fill(0, 256, null);
@@ -479,12 +478,75 @@ class VerifiableMap {
 		return new MapGetEntryResponse($key, $factory->createFromBytes($rv["body"]), $actTreeSize, $auditPath);
 	}
 
+    /**
+	 * For a given key, retrieve the value and inclusion proof, verify the proof, then return the value.
+	 * @param string $key the key in the map.
+	 * @param MapTreeState $treeHead a map tree state as previously returned by {@link #getVerifiedMapState(MapTreeState,int)}
+	 * @param VerifiableEntryFactory $f the factory that should be used to instantiate the VerifiableEntry. Typically one of {@link RawDataEntryFactory#getInstance()}, {@link JsonEntryFactory#getInstance()}, {@link RedactedJsonEntryFactory#getInstance()}.
+	 * @return the VerifiableEntry (which may be empty).
+	 */
+	function getVerifiedValue($key, $treeHead, $f) {
+		$resp = $this->get($key, $treeHead->getTreeSize(), $f);
+		$resp->verify($treeHead->getMapHead());
+		return $resp->getValue();
+	}
+
 	/**
 	 * @ignore
 	 */
 	function getTreeHead($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
 		return new MapTreeHead(base64_decode($obj->map_hash), new LogTreeHead($obj->mutation_log->tree_size, base64_decode($obj->mutation_log->tree_hash)));
+	}
+
+	/**
+	 * VerifiedLatestMapState fetches the latest MapTreeState, verifies it is consistent with,
+	 * and newer than, any previously passed state.
+	 * @param MapTreeState $prev previously held MapTreeState, may be null to skip consistency checks.
+	 * @return the map state for the given size
+	 */
+	function getVerifiedLatestMapState($prev) {
+		$head = $this->getVerifiedMapState($prev, 0);
+		if ($prev != null) {
+			if ($head->getTreeSize() <= $prev->getTreeSize()) {
+				return $prev;
+			}
+		}
+		return $head;
+	}
+
+	/**
+	 * VerifiedMapState returns a wrapper for the MapTreeHead for a given tree size, along with
+	 * a LogTreeHead for the TreeHeadLog that has been verified to contain this map tree head.
+	 * The value returned by this will have been proven to be consistent with any passed prev value.
+	 * Note that the TreeHeadLogTreeHead returned may differ between calls, even for the same treeSize,
+	 * as all future LogTreeHeads can also be proven to contain the MapTreeHead.
+	 *
+	 * Typical clients that only need to access current data will instead use getVerifiedLatestMapState()
+	 * @param MapTreeState $prev previously held MapTreeState, may be null to skip consistency checks.
+	 * @param int $treeSize the tree size to retrieve the hash for. Pass {@link ContinusecClient#HEAD} to get the
+	 * latest tree size.
+	 * @return the map state for the given size
+	 */
+	function getVerifiedMapState($prev, $treeSize) {
+		if (($treeSize != 0) && ($prev != null) && ($prev->getTreeSize() == $treeSize)) {
+			return $prev;
+		}
+
+		$mapHead = $this->getTreeHead($treeSize);
+		if ($prev != null) {
+			$this->getMutationLog()->verifyConsistency($prev->getMapHead()->getMutationLogTreeHead(), $mapHead->getMutationLogTreeHead());
+		}
+
+		$prevThlth = null;
+		if ($prev != null) {
+			$prevThlth = $prev->getTreeHeadLogTreeHead();
+		}
+
+		$thlth = $this->getTreeHeadLog()->getVerifiedLatestTreeHead($prevThlth);
+		$this->getTreeHeadLog()->verifyInclusion($thlth, $mapHead);
+
+		return new MapTreeState($mapHead, $thlth);
 	}
 
 	function blockUntilSize($treeSize) {
@@ -1115,12 +1177,50 @@ class MapTreeHead {
 		$this->mutationLogTreeHead = $mutationLogTreeHead;
 	}
 
+	function getTreeSize() {
+		return $this->mutationLogTreeHead->getTreeSize();
+	}
+
 	function getMutationLogTreeHead() {
 		return $this->mutationLogTreeHead;
 	}
 
 	function getRootHash() {
 		return $this->rootHash;
+	}
+
+	function getLeafHash() {
+	    return leaf_merkle_tree_hash(object_hash((object) [
+	        "map_hash" => base64_encode($this->getRootHash()),
+	        "mutation_log" => (object) [
+	            "tree_size" => $this->getTreeSize(),
+	            "tree_hash" => base64_encode($this->mutationLogTreeHead->getRootHash()),
+	        ],
+	    ]));
+	}
+
+}
+
+
+class MapTreeState {
+	private $mapHead;
+	private $treeHeadLogTreeHead;
+
+	function MapTreeState($mapHead, $treeHeadLogTreeHead) {
+		$this->mapHead = $mapHead;
+		$this->treeHeadLogTreeHead = $treeHeadLogTreeHead;
+	}
+
+	function getTreeSize() {
+		return $this->mapHead->getTreeSize();
+	}
+
+	function getMapHead() {
+		return $this->mapHead;
+	}
+
+	function getTreeHeadLogTreeHead() {
+		return $this->treeHeadLogTreeHead;
 	}
 }
 
@@ -1175,12 +1275,24 @@ class VerifiableLog {
 	 * @return LogInclusionProof a log inclusion proof object that can be verified against a given tree hash.
 	 */
 	function getInclusionProof($treeSize, $leafHash) {
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($leafHash), null)["body"]);
+	    $mtl = $leafHash->getLeafHash();
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($mtl), null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
 			array_push($auditPath, base64_decode($p));
 		}
-		return new LogInclusionProof($treeSize, $leafHash, $obj->leaf_index, $auditPath);
+		return new LogInclusionProof($treeSize, $mtl, $obj->leaf_index, $auditPath);
+	}
+
+	/**
+	 * Get an inclusion proof for a given item and verify it.
+	 * @param LogTreeHead $treeHead the tree head for which the inclusion proof should be returned. This is usually as returned by {@link #getTreeHead(int)}.
+	 * @param mixed $leafHash the entry for which the inclusion proof should be returned. Note that {@link AddEntryResponse} and {@link VerifiableEntry} both implement {@link MerkleTreeLeaf}.
+	 * @throws ContinusecException upon error
+	 */
+	function verifyInclusion($treeHead, $leafHash) {
+	    $proof = $this->getInclusionProof($treeHead->getTreeSize(), $leafHash);
+	    $proof->verify($treeHead);
 	}
 
 	/**
@@ -1212,6 +1324,36 @@ class VerifiableLog {
 			array_push($auditPath, base64_decode($p));
 		}
 		return new LogConsistencyProof($firstSize, $secondSize, $auditPath);
+	}
+
+	/**
+	 * verifyConsistency takes two tree heads, retrieves a consistency proof and then verifies it.
+	 * The two tree heads may be in either order (even equal), but both must be greater than zero and non-nil.
+	 * @param LogTreeHead $a one log tree head
+	 * @param LogTreeHead $b another log tree head
+	 */
+	function verifyConsistency($a, $b) {
+		if (($a->getTreeSize() <= 0) || ($b->getTreeSize() <= 0)) {
+			throw new InvalidRangeException();
+		}
+
+		if ($a->getTreeSize() == $b->getTreeSize()) {
+			if ($a->getRootHash() != $b->getRootHash()) {
+				throw new VerificationFailedException();
+			}
+			return; // special case, both are equal
+		}
+
+		if ($a->getTreeSize() < $b->getTreeSize()) {
+			$first = $a;
+			$second = $b;
+		} else {
+			$first = $b;
+			$second = $a;
+		}
+
+		$proof = $this->getConsistencyProof($first->getTreeSize(), $second->getTreeSize());
+		$proof->verify($first, $second);
 	}
 
 	/**
@@ -1288,61 +1430,58 @@ class VerifiableLog {
 	}
 
 	/**
-	 * FetchVerifiedTreeHead is a utility method to fetch a new LogTreeHead and verifies that it is consistent with
-	 * a tree head earlier fetched and persisted. To avoid potentially masking client tree head storage issues,
-	 * it is an error to pass null. For first use, pass new LogTreeHead(0, null), which will bypass consistency proof checking.
-	 * @param LogTreeHead $prev a previously persisted log tree head, or special value new LogTreeHead(0, null) on first run.
-	 * @return LogTreeHead a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
+	 * getVerifiedLatestTreeHead calls getVerifiedTreeHead() with HEAD to fetch the latest tree head,
+	 * and additionally verifies that it is newer than the previously passed tree head.
+	 * For first use, pass null to skip consistency checking.
+	 * @param LogTreeHead $prev a previously persisted log tree head
+	 * @return a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
 	 */
-	function fetchVerifiedTreeHead($prev) {
-		// Fetch latest from server
-		$head = $this->getTreeHead(0);
-
-		// If the new hash no later than our current one,
-		if ($head->getTreeSize() <= $prev->getTreeSize()) {
-			// return our current one
-			return $prev;
-		} else { // verify consistency with new one
-			// If previous is zero, then skip consistency check
-			if ($prev->getTreeSize() != 0) {
-				 // First fetch a consistency proof from the server
-				$p = $this->getConsistencyProof($prev->getTreeSize(), $head->getTreeSize());
-
-				// Verify the consistency proof
-				$p->verify($prev, $head);
+	function getVerifiedLatestTreeHead($prev) {
+		$head = $this->getVerifiedTreeHead($prev, 0);
+		if ($prev != null) {
+			if ($head->getTreeSize() <= $prev->getTreeSize()) {
+				return $prev;
 			}
-			return $head;
 		}
+		return $head;
+	}
+
+	/**
+	 * VerifiedTreeHead is a utility method to fetch a LogTreeHead and verifies that it is consistent with
+	 * a tree head earlier fetched and persisted. For first use, pass null for prev, which will
+	 * bypass consistency proof checking. Tree size may be older or newer than the previous head value.
+	 * @param LogTreeHead $prev a previously persisted log tree head
+	 * @param int $treeSize the tree size to fetch
+	 * @return a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
+	 */
+	function getVerifiedTreeHead($prev, $treeSize) {
+		// special case returning the value we already have
+		if (($treeSize != 0) && ($prev != null) && ($prev->getTreeSize() == $treeSize)) {
+			return $prev;
+		}
+
+		// Fetch latest from server
+		$head = $this->getTreeHead($treeSize);
+
+		if ($prev != null) {
+			$this->verifyConsistency($prev, $head);
+		}
+
+		return $head;
 	}
 
 	/**
 	 * VerifySuppliedInclusionProof is a utility method that fetches any required tree heads that are needed
 	 * to verify a supplied log inclusion proof. Additionally it will ensure that any fetched tree heads are consistent
-	 * with any prior supplied LogTreeHead.  o avoid potentially masking client tree head storage issues,
-	 * it is an error to pass null. For first use, pass new LogTreeHead(0, null), which will
+	 * with any prior supplied LogTreeHead.  To avoid potentially masking client tree head storage issues,
+	 * it is an error to pass null. For first use, pass {@link LogTreeHead#ZeroLogTreeHead}, which will
 	 * bypass consistency proof checking.
-	 * @param LogTreeHead $prev a previously persisted log tree head, or special value new LogTreeHead(0, null)
+	 * @param LogTreeHead $prev a previously persisted log tree head, or special value {@link LogTreeHead#ZeroLogTreeHead}
 	 * @param LogInclusionProof $proof an inclusion proof that may be for a different tree size than prev.getTreeSize()
-	 * @return LogTreeHead the verified (for consistency) LogTreeHead that was used for successful verification (of inclusion) of the supplied proof. This may be older than the LogTreeHead passed in.
+	 * @return the verified (for consistency) LogTreeHead that was used for successful verification (of inclusion) of the supplied proof. This may be older than the LogTreeHead passed in.
 	 */
 	function verifySuppliedInclusionProof($prev, $proof) {
-		$headForInclProof = null;
-		if ($proof->getTreeSize() == $prev->getTreeSize()) {
-			$headForInclProof = $prev;
-		} else {
-			$headForInclProof = $this->getTreeHead($proof->getTreeSize());
-			if ($prev->getTreeSize() != 0) { // so long as prev is not special value, check consistency
-				if ($prev->getTreeSize() < $headForInclProof->getTreeSize()) {
-					$p = $this->getConsistencyProof($prev->getTreeSize(), $headForInclProof->getTreeSize());
-					$p->verify($prev, $headForInclProof);
-				} else if ($prev->getTreeSize() > $headForInclProof->getTreeSize()) {
-					$p = $this->getConsistencyProof($headForInclProof->getTreeSize(), $prev->getTreeSize());
-					$p->verify($headForInclProof, $prev);
-				} else { // should not get here
-					throw new VerificationFailedException();
-				}
-			}
-		}
+		$headForInclProof = $this->getVerifiedTreeHead($prev, $proof->getTreeSize());
 		$proof->verify($headForInclProof);
 		return $headForInclProof;
 	}
@@ -1356,7 +1495,7 @@ class VerifiableLog {
 	 * @param mixed $auditor caller must implement auditLogEntry(int, *Entry) which is called sequentially for each index / log entry as it is encountered.
 	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
 	 */
-	function auditLogEntries($prev, $head, $factory, $auditor) {
+	function verifyEntries($prev, $head, $factory, $auditor) {
 		if (($prev == null) || $prev->getTreeSize() < $head->getTreeSize()) {
 			$merkleTreeStack = [];
 			if (($prev != null) && ($prev->getTreeSize() > 0)) {
