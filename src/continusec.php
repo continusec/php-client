@@ -16,6 +16,15 @@
    limitations under the License.
 */
 
+/**
+ * Client library for interacting with the Continusec Verifiable Data Structures API.
+ * Pre-requisites:
+ * - php-intl package required if using objecthash and data that contains unicode characters - will function without, but may fail to verify objecthashes with non-ASCII characters.
+ * - curl package required for all API calls. Authors welcome suggestions for alternate library to use if this is not standard for PHP installations.
+ *
+ * See docs for ContinusecClient class to get started.
+ */
+
 error_reporting(-1);
 
 /**
@@ -27,7 +36,6 @@ if (function_exists("normalizer_normalize")) {
 } else {
 	error_log("WARNING: normalizer_normalize (part of php-intl package) is required for proper unicode normalization for objecthash. Proceeding without, so non-ASCII characters may not verify correctly.", 0);
 }
-
 if (!function_exists("curl_init")) {
 	error_log("ERROR: curl_init not found. Without this the Continusec library can't make outbound connections.", 0);
 }
@@ -392,7 +400,8 @@ class ContinusecClient {
 }
 
 /**
- * @ignore
+ * Class to manage interactions with a Verifiable Map. Use ContinusecClient->getVerifiableMap() to instantiate.
+ * @example "map.php"
  */
 class VerifiableMap {
 	/**
@@ -405,7 +414,9 @@ class VerifiableMap {
 	private $path;
 
 	/**
-	 * @ignore
+	 * Package private constructor. Use {@link ContinusecClient#getVerifiableMap(String)} to instantiate.
+	 * @param ContinusecClient $client the client (used for requests) that this map belongs to
+	 * @param string $path the relative path to the map.
 	 */
 	function VerifiableMap($client, $path) {
 		$this->client = $client;
@@ -413,28 +424,41 @@ class VerifiableMap {
 	}
 
 	/**
-	 * @ignore
+	 * Send API call to create this map. This should only be called once, and subsequent
+	 * calls will cause an exception to be generated.
 	 */
 	function create() {
 		$this->client->makeRequest("PUT", $this->path, null);
 	}
 
 	/**
-	 * @ignore
+	 * Get a pointer to the mutation log that underlies this verifiable map. Since the mutation log
+	 * is managed by the map, it cannot be directly modified, however all read operations are supported.
+	 * Note that mutations themselves are stored as {@link JsonEntry} format, so {@link JsonEntryFactory#getInstance()} should
+	 * be used for entry retrieval.
+	 * @return VerifiableLog the mutation log.
 	 */
 	function getMutationLog() {
 		return new VerifiableLog($this->client, $this->path."/log/mutation");
 	}
 
 	/**
-	 * @ignore
+	 * Get a pointer to the tree head log that contains all map root hashes produced by this map. Since the tree head log
+	 * is managed by the map, it cannot be directly modified, however all read operations are supported.
+	 * Note that tree heaads themselves are stored as {@link JsonEntry} format, so {@link JsonEntryFactory#getInstance()} should
+	 * be used for entry retrieval.
+	 * @return VerifiableLog the tree head log.
 	 */
 	function getTreeHeadLog() {
 		return new VerifiableLog($this->client, $this->path."/log/treehead");
 	}
 
 	/**
-	 * @ignore
+	 * Set the value for a given key in the map. Calling this has the effect of adding a mutation to the
+	 * mutation log for the map, which then reflects in the root hash for the map. This occurs asynchronously.
+	 * @param string $key the key to set.
+	 * @param mixed $e the entry to set to key to. Typically one of {@link RawDataEntry}, {@link JsonEntry} or {@link RedactableJsonEntry}.
+	 * @return AddEntryResponse which includes the Merkle Tree Leaf hash of the mutation log entry added.
 	 */
 	function set($key, $entry) {
 		$obj = json_decode($this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . $entry->getFormat(), $entry->getDataForUpload())["body"]);
@@ -442,16 +466,22 @@ class VerifiableMap {
 	}
 
 	/**
-	 * @ignore
+	 * Delete the value for a given key from the map. Calling this has the effect of adding a mutation to the
+	 * mutation log for the map, which then reflects in the root hash for the map. This occurs asynchronously.
+	 * @param string $key the key to delete.
+	 * @return AddEntryResponse which includes the Merkle Tree Leaf hash of the mutation log entry added.
 	 */
 	function delete($key) {
 		$obj = json_decode($this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null)["body"]);
 		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
-
 	/**
-	 * @ignore
+	 * For a given key, return the value and inclusion proof for the given $treeSize.
+	 * @param string $key the key in the map.
+	 * @param int $treeSize the tree size.
+	 * @param VerifiableEntryFactory $f the factory that should be used to instantiate the VerifiableEntry. Typically one of {@link RawDataEntryFactory#getInstance()}, {@link JsonEntryFactory#getInstance()}, {@link RedactedJsonEntryFactory#getInstance()}.
+	 * @return MapEntryResponse the value (which may be empty) and inclusion proof.
 	 */
 	function get($key, $treeSize, $factory) {
 		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $factory->getFormat(), null);
@@ -483,7 +513,7 @@ class VerifiableMap {
 	 * @param string $key the key in the map.
 	 * @param MapTreeState $treeHead a map tree state as previously returned by {@link #getVerifiedMapState(MapTreeState,int)}
 	 * @param VerifiableEntryFactory $f the factory that should be used to instantiate the VerifiableEntry. Typically one of {@link RawDataEntryFactory#getInstance()}, {@link JsonEntryFactory#getInstance()}, {@link RedactedJsonEntryFactory#getInstance()}.
-	 * @return the VerifiableEntry (which may be empty).
+	 * @return VerifiableEntry the VerifiableEntry (which may be empty).
 	 */
 	function getVerifiedValue($key, $treeHead, $f) {
 		$resp = $this->get($key, $treeHead->getTreeSize(), $f);
@@ -492,7 +522,10 @@ class VerifiableMap {
 	}
 
 	/**
-	 * @ignore
+	 * Get the tree hash for given tree size.
+	 *
+	 * @param int $treeSize the tree size to retrieve the hash for. Pass {@link ContinusecClient#HEAD} to get the latest tree size.
+	 * @return int the tree hash for the given size (includes the tree size actually used, if unknown before running the query).
 	 */
 	function getTreeHead($treeSize=0) {
 		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
@@ -503,7 +536,7 @@ class VerifiableMap {
 	 * VerifiedLatestMapState fetches the latest MapTreeState, verifies it is consistent with,
 	 * and newer than, any previously passed state.
 	 * @param MapTreeState $prev previously held MapTreeState, may be null to skip consistency checks.
-	 * @return the map state for the given size
+	 * @return MapTreeState the map state for the given size
 	 */
 	function getVerifiedLatestMapState($prev) {
 		$head = $this->getVerifiedMapState($prev, 0);
@@ -526,7 +559,7 @@ class VerifiableMap {
 	 * @param MapTreeState $prev previously held MapTreeState, may be null to skip consistency checks.
 	 * @param int $treeSize the tree size to retrieve the hash for. Pass {@link ContinusecClient#HEAD} to get the
 	 * latest tree size.
-	 * @return the map state for the given size
+	 * @return MapTreeState the map state for the given size
 	 */
 	function getVerifiedMapState($prev, $treeSize) {
 		if (($treeSize != 0) && ($prev != null) && ($prev->getTreeSize() == $treeSize)) {
@@ -549,6 +582,14 @@ class VerifiableMap {
 		return new MapTreeState($mapHead, $thlth);
 	}
 
+	/**
+	 * Block until the map has caught up to a certain size.
+	 * This polls {@link #getTreeHead(int)} until
+	 * such time as a new tree hash is produced that is of at least this size.
+	 * This is intended for test use.
+	 * @param int $treeSize the tree size that we should wait for.
+	 * @return MapTreeHead the first tree hash that is at least this size.
+	 */
 	function blockUntilSize($treeSize) {
 		$lastHead = -1;
 		$secsToSleep = 0;
@@ -570,9 +611,23 @@ class VerifiableMap {
 	}
 }
 
+/**
+ * Class to represent the response for getting an entry from a map. It contains both the value
+ * itself, as well as an inclusion proof for how that value fits into the map root hash.
+ */
 class MapGetEntryResponse {
+	/**
+	 * @ignore
+	 */
 	private $key, $value, $treeSize, $auditPath;
 
+	/**
+	 * Constructor.
+	 * @param string $key the key for which this value is valid.
+	 * @param VerifiableEntry $value the value for this key.
+	 * @param int $treeSize the tree size that the inclusion proof is valid for.
+	 * @param string[] $auditPath the inclusion proof for this value in the map for a given tree size.
+	 */
 	function MapGetEntryResponse($key, $value, $treeSize, $auditPath) {
 		$this->key = $key;
 		$this->value = $value;
@@ -580,22 +635,43 @@ class MapGetEntryResponse {
 		$this->auditPath = $auditPath;
 	}
 
+	/**
+	 * The key in this map entry response.
+	 * @return string the key
+	 */
 	function getKey() {
 		return $this->key;
 	}
 
+	/**
+	 * The value in this map entry response.
+	 * @return VerifiableEntry the value
+	 */
 	function getValue() {
 		return $this->value;
 	}
 
+	/**
+	 * The tree size that this map entry response is valid for.
+	 * @return int the tree size
+	 */
 	function getTreeSize() {
 		return $this->treeSize;
 	}
 
+	/**
+	 * The audit path that can be applied to the value to reach the root hash for the map at this tree size.
+	 * @return string[] the audit path - for a map this is always 256 values, null values indicate that the default leaf value for that index should be used.
+	 */
 	function getAuditPath() {
 		return $this->auditPath;
 	}
 
+	/**
+	 * For a given tree head, check to see if our proof can produce it for the same tree size.
+	 * @param head the MapTreeHead to compare
+	 * @throws VerificationFailedException if any aspect of verification fails.
+	 */
 	function verify($head) {
 		global $DEFAULT_LEAF_VALUES;
 
@@ -956,7 +1032,7 @@ class LogInclusionProof {
 
 	/**
 	 * Returns the audit path.
-	 * @return array[] the audit path for this proof.
+	 * @return string[] the audit path for this proof.
 	 */
 	function getAuditPath() {
 		return $this->auditPath;
@@ -1049,7 +1125,7 @@ class LogConsistencyProof {
 
 	/**
 	 * Returns the audit path.
-	 * @return array[] the audit path.
+	 * @return string[] the audit path.
 	 */
 	function getAuditPath() {
 		return $this->auditPath;
@@ -1168,27 +1244,58 @@ class LogTreeHead {
 
 }
 
+/**
+ * Class for Tree Hash as returned for a map with a given size.
+ */
 class MapTreeHead {
+	/**
+	 * @ignore
+	 */
 	private $mutationLogTreeHead;
+	/**
+	 * @ignore
+	 */
 	private $rootHash;
 
+	/**
+	 * Constructor.
+	 * @param string $rootHash the root hash for the map of this tree size.
+	 * @param LogTreeHead $mutationLogHead the corresponding tree hash for the mutation log
+	 */
 	function MapTreeHead($rootHash, $mutationLogTreeHead) {
 		$this->rootHash = $rootHash;
 		$this->mutationLogTreeHead = $mutationLogTreeHead;
 	}
 
+	/**
+	 * Returns the map size for this root hash.
+	 * @return int the map size for this root hash.
+	 */
 	function getTreeSize() {
 		return $this->mutationLogTreeHead->getTreeSize();
 	}
 
+	/**
+	 * Get corresponding the mutation log tree hash.
+	 * @return LogTreeHead the mutation log tree hash.
+	 */
 	function getMutationLogTreeHead() {
 		return $this->mutationLogTreeHead;
 	}
 
+	/**
+	 * Returns the map root hash for this map size.
+	 * @return string the map root hash for this map size.
+	 */
 	function getRootHash() {
 		return $this->rootHash;
 	}
 
+	/**
+	 * Implementation of getLeafHash() so that MapTreeHead can be used easily with
+	 * {@link VerifiableLog#verifyInclusion(LogTreeHead, MerkleTreeLeaf)}.
+	 * @return string leaf hash based on the Object Hash for this map root hash with corresponding mutation log.
+	 */
 	function getLeafHash() {
 	    return leaf_merkle_tree_hash(object_hash((object) [
 	        "map_hash" => base64_encode($this->getRootHash()),
@@ -1201,24 +1308,49 @@ class MapTreeHead {
 
 }
 
-
+/**
+ * Class for MapTreeState as returned by {@link VerifiableMap#getVerifiedMapState(MapTreeState,int)}.
+ */
 class MapTreeState {
+	/**
+	 * @ignore
+	 */
 	private $mapHead;
+	/**
+	 * @ignore
+	 */
 	private $treeHeadLogTreeHead;
 
+	/**
+	 * Constructor.
+	 * @param MapTreeHead $mapHead the map tree head for the map
+	 * @param LogTreeHead $treeHeadLogTreeHead the tree head for the underlying tree head log that the mapTreeHead has been verified as being included.
+	 */
 	function MapTreeState($mapHead, $treeHeadLogTreeHead) {
 		$this->mapHead = $mapHead;
 		$this->treeHeadLogTreeHead = $treeHeadLogTreeHead;
 	}
 
+	/**
+	 * Utility method for returning the size of the map that this state represents.
+	 * @return int the size
+	 */
 	function getTreeSize() {
 		return $this->mapHead->getTreeSize();
 	}
 
+	/**
+	 * Get the map tree head.
+	 * @return MapTreeHead the map tree head
+	 */
 	function getMapHead() {
 		return $this->mapHead;
 	}
 
+	/**
+	 * Get corresponding the tree head log tree head.
+	 * @return LogTreeHead the tree head log tree head.
+	 */
 	function getTreeHeadLogTreeHead() {
 		return $this->treeHeadLogTreeHead;
 	}
@@ -1387,7 +1519,7 @@ class VerifiableLog {
 	 * @param int $startIdx the first entry to return
 	 * @param int $endIdx the last entry to return
 	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
-	 * @return array[] an array for the entries requested.
+	 * @return string[] an array for the entries requested.
 	 */
 	function getEntries($startIdx, $endIdx, $factory) {
 		$rv = array();
@@ -1434,7 +1566,7 @@ class VerifiableLog {
 	 * and additionally verifies that it is newer than the previously passed tree head.
 	 * For first use, pass null to skip consistency checking.
 	 * @param LogTreeHead $prev a previously persisted log tree head
-	 * @return a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
+	 * @return LogTreeHead a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
 	 */
 	function getVerifiedLatestTreeHead($prev) {
 		$head = $this->getVerifiedTreeHead($prev, 0);
@@ -1452,7 +1584,7 @@ class VerifiableLog {
 	 * bypass consistency proof checking. Tree size may be older or newer than the previous head value.
 	 * @param LogTreeHead $prev a previously persisted log tree head
 	 * @param int $treeSize the tree size to fetch
-	 * @return a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
+	 * @return LogTreeHead a new tree head, which has been verified to be consistent with the past tree head, or if no newer one present, the same value as passed in.
 	 */
 	function getVerifiedTreeHead($prev, $treeSize) {
 		// special case returning the value we already have
@@ -1473,12 +1605,11 @@ class VerifiableLog {
 	/**
 	 * VerifySuppliedInclusionProof is a utility method that fetches any required tree heads that are needed
 	 * to verify a supplied log inclusion proof. Additionally it will ensure that any fetched tree heads are consistent
-	 * with any prior supplied LogTreeHead.  To avoid potentially masking client tree head storage issues,
-	 * it is an error to pass null. For first use, pass {@link LogTreeHead#ZeroLogTreeHead}, which will
+	 * with any prior supplied LogTreeHead. For first use, pass null, which will
 	 * bypass consistency proof checking.
-	 * @param LogTreeHead $prev a previously persisted log tree head, or special value {@link LogTreeHead#ZeroLogTreeHead}
+	 * @param LogTreeHead $prev a previously persisted log tree head, or null.
 	 * @param LogInclusionProof $proof an inclusion proof that may be for a different tree size than prev.getTreeSize()
-	 * @return the verified (for consistency) LogTreeHead that was used for successful verification (of inclusion) of the supplied proof. This may be older than the LogTreeHead passed in.
+	 * @return LogTreeHead the verified (for consistency) LogTreeHead that was used for successful verification (of inclusion) of the supplied proof. This may be older than the LogTreeHead passed in.
 	 */
 	function verifySuppliedInclusionProof($prev, $proof) {
 		$headForInclProof = $this->getVerifiedTreeHead($prev, $proof->getTreeSize());
@@ -1490,7 +1621,7 @@ class VerifiableLog {
 	 * Utility method for auditors that wish to audit the full content of a log, as well as the log operation.
 	 * This method will retrieve all entries in batch from the log, and ensure that the root hash in head can be confirmed to accurately represent the contents
 	 * of all of the log entries. If prev is not null, then additionally it is proven that the root hash in head is consistent with the root hash in prev.
-	 * @param LogTreeHead $prev a previous LogTreeHead representing the set of entries that have been previously audited. To avoid potentially masking client tree head storage issues, it is an error to pass NULL. To indicate this is has not previously been audited, pass {@link LogTreeHead#ZeroLogTreeHead},
+	 * @param LogTreeHead $prev a previous LogTreeHead representing the set of entries that have been previously audited. To indicate this is has not previously been audited, pass null,
 	 * @param LogTreeHead $head the LogTreeHead up to which we wish to audit the log. Upon successful completion the caller should persist this for a future iteration.
 	 * @param mixed $auditor caller must implement auditLogEntry(int, *Entry) which is called sequentially for each index / log entry as it is encountered.
 	 * @param mixed $factory the type of entry to return, usually one of new RawDataEntryFactory(), new JsonEntryFactory() or new RedactedJsonEntryFactory().
@@ -1590,7 +1721,7 @@ function is_pow_2($n) {
  * Create the path in a sparse merkle tree for a given key. ie a boolean array representing
  * the big-endian index of the the hash of the key.
  * @param string $key the key
- * @return array[] a length 256 array of booleans representing left (false) and right (true) path in the Sparse Merkle Tree.
+ * @return boolean[] a length 256 array of booleans representing left (false) and right (true) path in the Sparse Merkle Tree.
  */
 function construct_map_key_path($key) {
 	$h = hash("sha256", $key, true);
