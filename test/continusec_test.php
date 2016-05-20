@@ -275,6 +275,13 @@ function test_client() {
         throw new Exception();
     }
 
+	if (count($client->listLogs()) != 24) {
+        throw new Exception();
+	}
+
+	if (count($client->listMaps()) != 15) {
+        throw new Exception();
+	}
 }
 
 /**

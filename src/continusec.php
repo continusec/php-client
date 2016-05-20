@@ -355,6 +355,32 @@ class ContinusecClient {
 	}
 
 	/**
+	 * Return list of logs held by the account.
+	 * @return {array[LogInfo]} logs.
+	 */
+	public function listLogs() {
+		$obj = json_decode($this->makeRequest("GET", "/logs", null)["body"]);
+		$rv = array();
+		foreach ($obj->results as $p) {
+			array_push($rv, new LogInfo($p->name));
+		}
+		return $rv;
+	}
+
+	/**
+	 * Return list of maps held by the account.
+	 * @return {array[MapInfo]} maps.
+	 */
+	public function listMaps() {
+		$obj = json_decode($this->makeRequest("GET", "/maps", null)["body"]);
+		$rv = array();
+		foreach ($obj->results as $p) {
+			array_push($rv, new MapInfo($p->name));
+		}
+		return $rv;
+	}
+
+	/**
 	 * @ignore
 	 * not intended to be public, just for internal use by this package
 	 */
@@ -1200,6 +1226,59 @@ class LogConsistencyProof {
 		if ($sr != $secondTreeHead->getRootHash()) {
 			throw new VerificationFailedException("Invalid proof (9)");
 		}
+	}
+}
+
+
+/**
+ *  Class to hold metadata about a log.
+ */
+class LogInfo {
+	/**
+	 * @ignore
+	 */
+	private $name;
+
+	/**
+	 * Constructor.
+	 * @param string $name the name.
+	 */
+	function LogInfo($name) {
+		$this->name = $name;
+	}
+
+	/**
+	 * Returns the name.
+	 * @return string the name.
+	 */
+	function getName() {
+		return $this->name;
+	}
+}
+
+/**
+ *  Class to hold metadata about a map.
+ */
+class MapInfo {
+	/**
+	 * @ignore
+	 */
+	private $name;
+
+	/**
+	 * Constructor.
+	 * @param string $name the name.
+	 */
+	function MapInfo($name) {
+		$this->name = $name;
+	}
+
+	/**
+	 * Returns the name.
+	 * @return string the name.
+	 */
+	function getName() {
+		return $this->name;
 	}
 }
 
