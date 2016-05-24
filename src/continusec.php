@@ -458,6 +458,14 @@ class VerifiableMap {
 	}
 
 	/**
+	 * Destroy will send an API call to delete this map - this operation removes it permanently,
+	 * and renders the name unusable again within the same account, so please use with caution.
+	 */
+	function destroy() {
+		$this->client->makeRequest("DELETE", $this->path, null);
+	}
+
+	/**
 	 * Get a pointer to the mutation log that underlies this verifiable map. Since the mutation log
 	 * is managed by the map, it cannot be directly modified, however all read operations are supported.
 	 * Note that mutations themselves are stored as {@link JsonEntry} format, so {@link JsonEntryFactory#getInstance()} should
@@ -1465,6 +1473,14 @@ class VerifiableLog {
 	 */
 	function create() {
 		$this->client->makeRequest("PUT", $this->path, null);
+	}
+
+	/**
+	 * Destroy will send an API call to delete this log - this operation removes it permanently,
+	 * and renders the name unusable again within the same account, so please use with caution.
+	 */
+	function destroy() {
+		$this->client->makeRequest("DELETE", $this->path, null);
 	}
 
 	/**

@@ -282,6 +282,22 @@ function test_client() {
 	if (count($client->listMaps()) != 15) {
         throw new Exception();
 	}
+
+	$map->destroy();
+	try {
+		$map->destroy();
+		throw new Exception();
+	} catch (ObjectConflictException $e) {
+		// good
+	}
+
+	$log->destroy();
+	try {
+		$log->destroy();
+		throw new Exception();
+	} catch (ObjectConflictException $e) {
+		// good
+	}
 }
 
 /**
