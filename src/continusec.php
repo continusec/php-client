@@ -468,7 +468,7 @@ class VerifiableMap {
 	/**
 	 * Get a pointer to the mutation log that underlies this verifiable map. Since the mutation log
 	 * is managed by the map, it cannot be directly modified, however all read operations are supported.
-	 * Note that mutations themselves are stored as {@link JsonEntry} format, so {@link JsonEntryFactory#getInstance()} should
+	 * Note that mutations themselves are stored as JsonEntry format, so JsonEntryFactory#getInstance() should
 	 * be used for entry retrieval.
 	 * @return VerifiableLog the mutation log.
 	 */
@@ -479,7 +479,7 @@ class VerifiableMap {
 	/**
 	 * Get a pointer to the tree head log that contains all map root hashes produced by this map. Since the tree head log
 	 * is managed by the map, it cannot be directly modified, however all read operations are supported.
-	 * Note that tree heaads themselves are stored as {@link JsonEntry} format, so {@link JsonEntryFactory#getInstance()} should
+	 * Note that tree heaads themselves are stored as JsonEntry format, so JsonEntryFactory#getInstance() should
 	 * be used for entry retrieval.
 	 * @return VerifiableLog the tree head log.
 	 */
