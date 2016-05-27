@@ -86,6 +86,9 @@ function object_hash_map_with_redaction($o, $r) {
  * @ignore
  */
 function object_hash_float($o) {
+	if ($o == 0.0) { // special case 0
+		return hash("sha256", "f+0:", true);
+	}
 	$s = "+";
 	if ($o < 0) {
 		$s = "-";

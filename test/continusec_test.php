@@ -332,6 +332,6 @@ function object_hash_test($test_loc) {
 	}
 }
 
-test_client();
 object_hash_test("../objecthash/common_json.test");
+test_client();
 ?>
