@@ -298,6 +298,21 @@ function test_client() {
 	} catch (ObjectConflictException $e) {
 		// good
 	}
+
+	$client = new ContinusecClient("7981306761429961588", "c9fc80d4e19ddbf01a4e6b5277a29e1bffa88fe047af9d0b9b36de536f85c2c6", "http://localhost:8080");
+	$map = $client->getVerifiableMap("mapjson");
+	$m3 = $map->getVerifiedLatestMapState(null);
+	$map->getVerifiedValue("stdjson", $m3, new JsonEntryFactory());
+	$map->getVerifiedValue("redjson", $m3, new RedactedJsonEntryFactory());
+	$map->getVerifiedValue("xstdjson", $m3, new JsonEntryFactory());
+	$map->getVerifiedValue("xredjson", $m3, new RedactedJsonEntryFactory());
+	$client = new ContinusecClient("7981306761429961588", "redacted", "http://localhost:8080");
+	$map = $client->getVerifiableMap("mapjson");
+	$m3 = $map->getVerifiedLatestMapState(null);
+	$map->getVerifiedValue("stdjson", $m3, new JsonEntryFactory());
+	$map->getVerifiedValue("redjson", $m3, new RedactedJsonEntryFactory());
+	$map->getVerifiedValue("xstdjson", $m3, new JsonEntryFactory());
+	$map->getVerifiedValue("xredjson", $m3, new RedactedJsonEntryFactory());
 }
 
 /**

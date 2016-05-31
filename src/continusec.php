@@ -836,7 +836,11 @@ class JsonEntry {
 	 * @return string the Merkle Tree leaf hash for this entry.
 	 */
 	function getLeafHash() {
-		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+		if (strlen($this->data) == 0) {
+			return leaf_merkle_tree_hash("");
+		} else {
+			return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+		}
 	}
 }
 
@@ -911,7 +915,11 @@ class RedactedJsonEntry {
 	 * @return string the Merkle Tree leaf hash for this entry.
 	 */
 	function getLeafHash() {
-		return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+		if (strlen($this->data) == 0) {
+			return leaf_merkle_tree_hash("");
+		} else {
+			return leaf_merkle_tree_hash(object_hash_with_std_redaction(json_decode($this->data)));
+		}
 	}
 }
 
