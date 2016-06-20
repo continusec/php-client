@@ -362,7 +362,7 @@ class ContinusecClient {
 	 * @return {array[LogInfo]} logs.
 	 */
 	public function listLogs() {
-		$obj = json_decode($this->makeRequest("GET", "/logs", null)["body"]);
+		$obj = json_decode($this->makeRequest("GET", "/logs", null, null)["body"]);
 		$rv = array();
 		foreach ($obj->results as $p) {
 			array_push($rv, new LogInfo($p->name));
@@ -375,7 +375,7 @@ class ContinusecClient {
 	 * @return {array[MapInfo]} maps.
 	 */
 	public function listMaps() {
-		$obj = json_decode($this->makeRequest("GET", "/maps", null)["body"]);
+		$obj = json_decode($this->makeRequest("GET", "/maps", null, null)["body"]);
 		$rv = array();
 		foreach ($obj->results as $p) {
 			array_push($rv, new MapInfo($p->name));
@@ -387,10 +387,16 @@ class ContinusecClient {
 	 * @ignore
 	 * not intended to be public, just for internal use by this package
 	 */
-	public function makeRequest($method, $path, $data) {
+	public function makeRequest($method, $path, $data, $extraHeaders) {
 		$conn = curl_init();
 		curl_setopt($conn, CURLOPT_URL, $this->baseUrl . "/v1/account/" . $this->account . $path);
-		curl_setopt($conn, CURLOPT_HTTPHEADER, array("Authorization: Key " . $this->apiKey));
+		$headers = array("Authorization: Key " . $this->apiKey);
+		if ($extraHeaders != null) {
+			foreach($extraHeaders as $h) {
+				array_push($headers, $h[0] . ": " . $h[1]);
+			}
+		}
+		curl_setopt($conn, CURLOPT_HTTPHEADER, $headers);
 
 		curl_setopt($conn, CURLOPT_CUSTOMREQUEST, $method);
 		curl_setopt($conn, CURLOPT_POSTFIELDS, $data);
@@ -457,7 +463,7 @@ class VerifiableMap {
 	 * calls will cause an exception to be generated.
 	 */
 	function create() {
-		$this->client->makeRequest("PUT", $this->path, null);
+		$this->client->makeRequest("PUT", $this->path, null, null);
 	}
 
 	/**
@@ -465,7 +471,7 @@ class VerifiableMap {
 	 * and renders the name unusable again within the same account, so please use with caution.
 	 */
 	function destroy() {
-		$this->client->makeRequest("DELETE", $this->path, null);
+		$this->client->makeRequest("DELETE", $this->path, null, null);
 	}
 
 	/**
@@ -498,7 +504,23 @@ class VerifiableMap {
 	 * @return AddEntryResponse which includes the Merkle Tree Leaf hash of the mutation log entry added.
 	 */
 	function set($key, $entry) {
-		$obj = json_decode($this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . $entry->getFormat(), $entry->getDataForUpload())["body"]);
+		$obj = json_decode($this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . $entry->getFormat(), $entry->getDataForUpload(), null)["body"]);
+		return new AddEntryResponse(base64_decode($obj->leaf_hash));
+	}
+
+	/**
+	 * Set the value for a given key in the map, conditional on the previous leaf hash being current.
+	 * Calling this has the effect of adding a mutation to the
+	 * mutation log for the map, which then reflects in the root hash for the map. This occurs asynchronously.
+	 * @param string $key the key to set.
+	 * @param mixed $e the entry to set to key to. Typically one of {@link RawDataEntry}, {@link JsonEntry} or {@link RedactableJsonEntry}.
+	 * @param mixed $previousLeafHash the previous leaf hash value. Typically one of {@link RawDataEntry}, {@link JsonEntry}, must implement getLeafHash().
+	 * @return AddEntryResponse which includes the Merkle Tree Leaf hash of the mutation log entry added.
+	 */
+	function update($key, $entry, $previousLeafHash) {
+		$obj = json_decode($this->client->makeRequest("PUT", $this->path . "/key/h/" . bin2hex($key) . $entry->getFormat(), $entry->getDataForUpload(), [
+			["X-Previous-LeafHash", bin2hex($previousLeafHash->getLeafHash())],
+		])["body"]);
 		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
@@ -509,7 +531,7 @@ class VerifiableMap {
 	 * @return AddEntryResponse which includes the Merkle Tree Leaf hash of the mutation log entry added.
 	 */
 	function delete($key) {
-		$obj = json_decode($this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null)["body"]);
+		$obj = json_decode($this->client->makeRequest("DELETE", $this->path . "/key/h/" . bin2hex($key), null, null)["body"]);
 		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
@@ -521,7 +543,7 @@ class VerifiableMap {
 	 * @return MapEntryResponse the value (which may be empty) and inclusion proof.
 	 */
 	function get($key, $treeSize, $factory) {
-		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $factory->getFormat(), null);
+		$rv = $this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/key/h/" . bin2hex($key) . $factory->getFormat(), null, null);
 
 		$auditPath = array_fill(0, 256, null);
 		$lwrHdr = strtolower($rv["headers"]);
@@ -565,7 +587,7 @@ class VerifiableMap {
 	 * @return int the tree hash for the given size (includes the tree size actually used, if unknown before running the query).
 	 */
 	function getTreeHead($treeSize=0) {
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null, null)["body"]);
 		return new MapTreeHead(base64_decode($obj->map_hash), new LogTreeHead($obj->mutation_log->tree_size, base64_decode($obj->mutation_log->tree_hash)));
 	}
 
@@ -1483,7 +1505,7 @@ class VerifiableLog {
 	 * calls will cause an exception to be generated.
 	 */
 	function create() {
-		$this->client->makeRequest("PUT", $this->path, null);
+		$this->client->makeRequest("PUT", $this->path, null, null);
 	}
 
 	/**
@@ -1491,7 +1513,7 @@ class VerifiableLog {
 	 * and renders the name unusable again within the same account, so please use with caution.
 	 */
 	function destroy() {
-		$this->client->makeRequest("DELETE", $this->path, null);
+		$this->client->makeRequest("DELETE", $this->path, null, null);
 	}
 
 	/**
@@ -1502,7 +1524,7 @@ class VerifiableLog {
 	 * @return LogTreeHead the tree hash for the given size (includes the tree size actually used, if unknown before running the query).
 	 */
 	function getTreeHead($treeSize=0) {
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null)["body"]);
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize, null, null)["body"]);
 		return new LogTreeHead($obj->tree_size, base64_decode($obj->tree_hash));
 	}
 
@@ -1514,7 +1536,7 @@ class VerifiableLog {
 	 */
 	function getInclusionProof($treeSize, $leafHash) {
 	    $mtl = $leafHash->getLeafHash();
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($mtl), null)["body"]);
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/h/" . bin2hex($mtl), null, null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
 			array_push($auditPath, base64_decode($p));
@@ -1541,7 +1563,7 @@ class VerifiableLog {
 	 * @return LogInclusionProof a partially filled in LogInclusionProof (note it will not include the MerkleTreeLeaf hash for the item).
 	 */
 	function getInclusionProofByIndex($treeSize, $leafIndex) {
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/" . $leafIndex, null)["body"]);
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $treeSize . "/inclusion/" . $leafIndex, null, null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
 			array_push($auditPath, base64_decode($p));
@@ -1556,7 +1578,7 @@ class VerifiableLog {
 	 * @return LogConsistencyProof a log consistency proof object that must be verified.
 	 */
 	function getConsistencyProof($firstSize, $secondSize) {
-		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $secondSize . "/consistency/" . $firstSize, null)["body"]);
+		$obj = json_decode($this->client->makeRequest("GET", $this->path . "/tree/" . $secondSize . "/consistency/" . $firstSize, null, null)["body"]);
 		$auditPath = array();
 		foreach ($obj->proof as $p) {
 			array_push($auditPath, base64_decode($p));
@@ -1603,7 +1625,7 @@ class VerifiableLog {
 	 * @return AddEntryResponse add entry response, which includes the Merkle Tree Leaf hash of the entry added.
 	 */
 	function addEntry($entry) {
-		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry" . $entry->getFormat(), $entry->getDataForUpload())["body"]);
+		$obj = json_decode($this->client->makeRequest("POST", $this->path . "/entry" . $entry->getFormat(), $entry->getDataForUpload(), null)["body"]);
 		return new AddEntryResponse(base64_decode($obj->leaf_hash));
 	}
 
@@ -1615,7 +1637,7 @@ class VerifiableLog {
 	 * @return string the entry requested.
 	 */
 	function getEntry($idx, $factory) {
-		return $factory->createFromBytes($this->client->makeRequest("GET", $this->path . "/entry/" . $idx . $factory->getFormat(), null)["body"]);
+		return $factory->createFromBytes($this->client->makeRequest("GET", $this->path . "/entry/" . $idx . $factory->getFormat(), null, null)["body"]);
 	}
 
 	/**
@@ -1629,7 +1651,7 @@ class VerifiableLog {
 	 */
 	function getEntries($startIdx, $endIdx, $factory) {
 		$rv = array();
-		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx . $factory->getFormat(), null)["body"])->entries as $a) {
+		foreach (json_decode($this->client->makeRequest("GET", $this->path . "/entries/" . $startIdx . "-" . $endIdx . $factory->getFormat(), null, null)["body"])->entries as $a) {
 			array_push($rv, $factory->createFromBytes(base64_decode($a->leaf_data)));
 		}
 		return $rv;

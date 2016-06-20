@@ -313,6 +313,10 @@ function test_client() {
 	$map->getVerifiedValue("redjson", $m3, new RedactedJsonEntryFactory());
 	$map->getVerifiedValue("xstdjson", $m3, new JsonEntryFactory());
 	$map->getVerifiedValue("xredjson", $m3, new RedactedJsonEntryFactory());
+
+	$client = new ContinusecClient("7981306761429961588", "testupdate", "http://localhost:8080");
+	$map = $client->getVerifiableMap("loadtestmap2");
+	$map->update("fooyo", new RawDataEntry("bar"), new RawDataEntry(""));
 }
 
 /**
